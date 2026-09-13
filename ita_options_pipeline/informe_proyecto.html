@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<html xmlns="http://www.w3.org/1999/xhtml">
 <head>
   <meta charset="utf-8" />
   <meta name="generator" content="pandoc" />
@@ -31,18 +31,19 @@
 <header id="title-block-header">
 <h1 class="title">Pipeline de detección y backtesting de arbitrajes de
 opciones</h1>
-<p class="subtitle">Proyecto ITA - RTX y BA</p>
+<p class="subtitle">Proyecto ITA - RTX, BA y LMT</p>
 <p class="author">Informe técnico para la presentación</p>
-<p class="date">5 de septiembre de 2026</p>
+<p class="date">13 de septiembre de 2026</p>
 </header>
 <h1 id="resumen-ejecutivo">Resumen ejecutivo</h1>
 <p>El proyecto construye un proceso reproducible para estudiar posibles
-arbitrajes de opciones sobre las acciones RTX y BA. El flujo parte de
-contratos y cotizaciones, limpia y alinea la información con controles
-contra lookahead bias, calcula volatilidad implícita mediante un árbol
-binomial americano, filtra contratos que no parecen operables, detecta
-inconsistencias de precios y finalmente simula la ejecución con costos,
-latencia y reglas de riesgo.</p>
+arbitrajes de opciones sobre las acciones RTX, BA y LMT, constituyentes
+individuales del ETF ITA. El flujo parte de contratos y cotizaciones,
+limpia y alinea la información con controles contra lookahead bias,
+calcula volatilidad implícita mediante un árbol binomial americano,
+filtra contratos que no parecen operables, detecta inconsistencias de
+precios y finalmente simula la ejecución con costos, latencia y reglas
+de riesgo.</p>
 <p>La implementación técnica de las etapas de datos, limpieza,
 valuación, detección, backtesting y evaluación está avanzada y cuenta
 con tests. Sin embargo, el proyecto todavía no es un sistema completo en
@@ -133,6 +134,21 @@ volatilidad.</td>
 <td>Implementa BSM, árbol CRR, cotas e inversión de IV.</td>
 </tr>
 <tr>
+<td><code>calibration.py</code></td>
+<td>Define el perfil calibrado de cada activo y simula su precio con
+difusión con saltos de Merton.</td>
+</tr>
+<tr>
+<td><code>demo.py</code></td>
+<td>Genera el mercado sintético y corre el pipeline completo
+offline.</td>
+</tr>
+<tr>
+<td><code>doctor.py</code></td>
+<td>Diagnostica credenciales, feed, universo, NBBO y viabilidad antes de
+operar.</td>
+</tr>
+<tr>
 <td><code>filters.py</code></td>
 <td>Marca contratos no explotables y produce un reporte auditable.</td>
 </tr>
@@ -169,7 +185,7 @@ revisión puede organizarse en cuatro grupos.</p>
 opciones. El precio evoluciona en pasos discretos hacia arriba o hacia
 abajo y se descuenta el valor esperado bajo una probabilidad
 riesgo-neutral.</p>
-<p>La aplicación al caso es directa: RTX y BA tienen opciones
+<p>La aplicación al caso es directa: RTX, BA y LMT tienen opciones
 americanas, por lo que el árbol permite comparar en cada nodo el valor
 de continuar con el valor de ejercer inmediatamente.</p>
 <h2 id="opciones-americanas">Opciones americanas</h2>
@@ -232,6 +248,92 @@ suscripción adicional.</p>
 <p>Los datos se guardan en Parquet particionado por subyacente y fecha.
 Junto al dataset se puede guardar un manifiesto con los supuestos
 usados: tasas, dividendos, umbrales, feed y parámetros del modelo.</p>
+<h2 id="muestra-sintética-calibrada">Muestra sintética calibrada</h2>
+<p>Como no hay NBBO histórico, la demo y la validación de los detectores
+usan un mercado generado. Para que sea un banco de pruebas válido, la
+muestra tiene que reproducir la distribución de cada activo real. La
+metodología completa está en
+<code>justificacion_generacion_datos.md</code>; el resumen es:</p>
+<ul>
+<li><strong>Elección de activos.</strong> RTX y BA, más LMT como tercer
+constituyente del ITA. Se descartó GE Aerospace porque su escisión de
+2024 hace que la serie histórica no corresponda a la entidad actual. Los
+tres activos cubren regímenes distintos: BA con vol alta y colas muy
+gordas, RTX con vol media y distribución más simétrica, LMT con vol de
+base baja y saltos raros pero severos.</li>
+<li><strong>Modelo.</strong> Difusión con saltos de Merton bajo la
+medida riesgo-neutral. La vol total del proceso se fija igual a la IV
+at-the-money con la que se valúan las opciones, de modo que la vol
+realizada coincide con la implícita por construcción.</li>
+<li><strong>Parámetros por activo</strong> (fuentes públicas, septiembre
+de 2026):</li>
+</ul>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 26%" />
+<col style="width: 26%" />
+<col style="width: 26%" />
+</colgroup>
+<thead>
+<tr>
+<th>Parámetro</th>
+<th style="text-align: right;">RTX</th>
+<th style="text-align: right;">BA</th>
+<th style="text-align: right;">LMT</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Spot de referencia</td>
+<td style="text-align: right;">174</td>
+<td style="text-align: right;">210</td>
+<td style="text-align: right;">524</td>
+</tr>
+<tr>
+<td>Dividendo continuo</td>
+<td style="text-align: right;">1,6%</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">2,6%</td>
+</tr>
+<tr>
+<td>Vol total anual (= IV atm)</td>
+<td style="text-align: right;">28%</td>
+<td style="text-align: right;">36%</td>
+<td style="text-align: right;">26%</td>
+</tr>
+<tr>
+<td>Saltos por año</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>Media / desvío del salto</td>
+<td style="text-align: right;">−2,5% / 3,5%</td>
+<td style="text-align: right;">−3,5% / 5,5%</td>
+<td style="text-align: right;">−3,0% / 4,5%</td>
+</tr>
+<tr>
+<td>Skew / curvatura del smile</td>
+<td style="text-align: right;">0,35 / 0,90</td>
+<td style="text-align: right;">0,55 / 1,30</td>
+<td style="text-align: right;">0,35 / 0,85</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Validación.</strong> Sobre 24 réplicas de 2.520 días, la vol
+simulada iguala al objetivo (28,0%, 36,0% y 26,0%), el skew es negativo
+en los tres (−0,45, −0,97 y −0,69) y el exceso de curtosis es positivo
+(+2,2, +6,3 y +4,6). <code>validate_sample.py</code> reproduce la tabla
+y la figura <code>outputs/validacion_distribucion.png</code>, y
+<code>tests/test_calibration.py</code> falla si algún cambio rompe ese
+parecido.</li>
+</ul>
+<p>El proceso tiene vol constante por activo: no modela clustering de
+volatilidad. Es una decisión consciente para mantener la coherencia con
+el árbol CRR de una sola sigma por contrato.</p>
 <h1 id="limpieza-y-controles-de-calidad">5. Limpieza y controles de
 calidad</h1>
 <h2 id="mid-y-spread">Mid y spread</h2>
@@ -283,14 +385,14 @@ o posible arbitraje estático, pero no se fuerza una IV.</p>
 offline</h2>
 <p>La corrida realizada produjo:</p>
 <ul>
-<li>1.248 cotizaciones;</li>
+<li>1.872 cotizaciones;</li>
 <li>12 cortes temporales;</li>
-<li>136 contratos;</li>
-<li>2 subyacentes;</li>
+<li>296 contratos;</li>
+<li>3 subyacentes (RTX, BA y LMT);</li>
 <li>100% de las cotizaciones con spot alineado;</li>
-<li>1.248 de 1.248 IV americanas invertidas;</li>
-<li>IV mediana cercana a 32,4%;</li>
-<li>rango aproximado entre 22,8% y 59,7%;</li>
+<li>1.872 de 1.872 IV americanas invertidas;</li>
+<li>IV mediana cercana a 27,8%;</li>
+<li>rango aproximado entre 24,7% y 73,9%;</li>
 <li>cero filas fuera de las cotas de no arbitraje.</li>
 </ul>
 <p>Estos números demuestran que la implementación funciona sobre el
@@ -306,7 +408,7 @@ y presentar:</p>
 <li>precio observado contra precio CRR;</li>
 <li>RMSE o MAE ponderado por vega;</li>
 <li>comparación entre IV americana, IV europea e IV del proveedor;</li>
-<li>análisis separado por RTX y BA.</li>
+<li>análisis separado por RTX, BA y LMT.</li>
 </ul>
 <p>El código ya contiene <code>calibrate_chain_sigma()</code> para una
 sigma global, pero todavía no hay en el repositorio una tabla real con
@@ -383,9 +485,9 @@ en puts ITM.</li>
 </tr>
 </tbody>
 </table>
-<p>En la demo se conservaron 1.239 de 1.248 filas, un 99,3%. Nueve
-fueron excluidas por open interest insuficiente. Nuevamente, es un
-resultado sintético.</p>
+<p>En la demo se conservaron 1.855 de 1.872 filas, un 99,1%. Dieciséis
+fueron excluidas por open interest insuficiente y una por volumen
+insuficiente. Nuevamente, es un resultado sintético.</p>
 <p>La oportunidad se reporta con la liquidez de la peor pata: volumen
 mínimo, OI mínimo y máximo spread relativo. Esto evita mostrar un
 arbitraje de tres patas como líquido sólo porque dos patas lo son.</p>
@@ -425,23 +527,27 @@ vencimiento:</p>
 <tr>
 <td style="text-align: right;">1 minuto</td>
 <td style="text-align: right;">9</td>
-<td style="text-align: right;">-USD 1.019</td>
+<td style="text-align: right;">-USD 1.355</td>
 </tr>
 <tr>
 <td style="text-align: right;">5 minutos</td>
 <td style="text-align: right;">9</td>
-<td style="text-align: right;">-USD 1.019</td>
+<td style="text-align: right;">-USD 1.355</td>
 </tr>
 <tr>
 <td style="text-align: right;">15 minutos</td>
-<td style="text-align: right;">6</td>
-<td style="text-align: right;">-USD 864</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">-USD 1.652</td>
 </tr>
 </tbody>
 </table>
-<p>El resultado negativo es coherente con pagar el spread de entrada y
-salida sin llegar a la liquidación final. No es una medida de
-rentabilidad de la estrategia.</p>
+<p>Las nueve posiciones cierran por fin de datos. El resultado negativo
+es coherente con pagar el spread de entrada y salida sin llegar a la
+liquidación final, y empeora con más latencia porque la ejecución se
+hace contra quotes más alejados de la señal. En el último corte no
+quedan oportunidades por encima del umbral de USD 5: las señales
+operadas surgen en cortes anteriores, donde están las dislocaciones
+inyectadas. No es una medida de rentabilidad de la estrategia.</p>
 <h1 id="in-sample-y-out-of-sample">10. In-sample y out-of-sample</h1>
 <p><code>evaluation.py</code> divide cronológicamente el dataset. Por
 defecto se puede usar 60% in-sample y 40% out-of-sample.</p>
@@ -606,6 +712,14 @@ documentados.</td>
 <li>una sigma global no representa todo el smile;</li>
 <li>una misma dislocación puede producir muchas oportunidades
 duplicadas;</li>
+<li>la curva de tasas por plazo tiene un campo de configuración, pero
+todavía no se usa;</li>
+<li>el recorder arma el universo una sola vez al arrancar y no refresca
+el maestro diario si queda corriendo varios días;</li>
+<li><code>enrich</code> toma el open interest del último maestro
+disponible, lo que anula el OI al procesar fechas pasadas;</li>
+<li>los subcomandos de red de la CLI usan por defecto sólo RTX y BA; LMT
+hay que pasarlo con <code>--tickers</code>;</li>
 <li>la historia previa al recorder conserva survivorship bias;</li>
 <li>el demo no es evidencia de rentabilidad;</li>
 <li>no existe todavía ejecución paper ni monitoreo en vivo.</li>
@@ -662,9 +776,10 @@ esa capa.</li>
 </ol>
 <h2 id="estado-reproducible-al-preparar-este-informe">Estado
 reproducible al preparar este informe</h2>
-<p>La suite ejecutada con Python 3.14 produjo 26 tests exitosos. El demo
-offline recorrió generación sintética, alineación, IV, filtros, Parquet,
-detección y backtest. La capa de red no se ejecutó porque no estaban
-configuradas las credenciales de Alpaca.</p>
+<p>La suite ejecutada con Python 3.14.3 el 13 de septiembre de 2026
+produjo 40 tests exitosos. El demo offline recorrió generación sintética
+calibrada, alineación, IV, filtros, Parquet, detección y backtest. La
+capa de red no se ejecutó porque no estaban configuradas las
+credenciales de Alpaca.</p>
 </body>
 </html>

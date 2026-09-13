@@ -1,0 +1,5 @@
+# Archivos binarios: sin conversión de fin de línea (evita corromper PDFs)
+*.pdf binary
+*.png binary
+*.docx binary
+*.parquet binary

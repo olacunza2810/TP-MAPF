@@ -1,15 +1,15 @@
 ---
 title: "Pipeline de detección y backtesting de arbitrajes de opciones"
-subtitle: "Proyecto ITA - RTX y BA"
+subtitle: "Proyecto ITA - RTX, BA y LMT"
 author: "Informe técnico para la presentación"
-date: "5 de septiembre de 2026"
+date: "13 de septiembre de 2026"
 geometry: margin=2.2cm
 fontsize: 11pt
 ---
 
 # Resumen ejecutivo
 
-El proyecto construye un proceso reproducible para estudiar posibles arbitrajes de opciones sobre las acciones RTX y BA. El flujo parte de contratos y cotizaciones, limpia y alinea la información con controles contra lookahead bias, calcula volatilidad implícita mediante un árbol binomial americano, filtra contratos que no parecen operables, detecta inconsistencias de precios y finalmente simula la ejecución con costos, latencia y reglas de riesgo.
+El proyecto construye un proceso reproducible para estudiar posibles arbitrajes de opciones sobre las acciones RTX, BA y LMT, constituyentes individuales del ETF ITA. El flujo parte de contratos y cotizaciones, limpia y alinea la información con controles contra lookahead bias, calcula volatilidad implícita mediante un árbol binomial americano, filtra contratos que no parecen operables, detecta inconsistencias de precios y finalmente simula la ejecución con costos, latencia y reglas de riesgo.
 
 La implementación técnica de las etapas de datos, limpieza, valuación, detección, backtesting y evaluación está avanzada y cuenta con tests. Sin embargo, el proyecto todavía no es un sistema completo en producción: la revisión de literatura no está documentada en el repositorio, no existe envío de órdenes de paper trading, no hay monitoreo conectado a una cuenta y no existe un P&L real acumulado.
 
@@ -62,6 +62,9 @@ Alpaca
 | `schemas.py` | Fija las columnas y tipos del dataset. |
 | `enrich.py` | Calcula mid, spread, tiempo a vencimiento, alineación y volatilidad. |
 | `volatility.py` | Implementa BSM, árbol CRR, cotas e inversión de IV. |
+| `calibration.py` | Define el perfil calibrado de cada activo y simula su precio con difusión con saltos de Merton. |
+| `demo.py` | Genera el mercado sintético y corre el pipeline completo offline. |
+| `doctor.py` | Diagnostica credenciales, feed, universo, NBBO y viabilidad antes de operar. |
 | `filters.py` | Marca contratos no explotables y produce un reporte auditable. |
 | `arbitrage.py` | Implementa seis detectores y calcula el edge neto. |
 | `storage.py` | Escribe y lee Parquet particionado y manifiestos. |
@@ -77,7 +80,7 @@ Esta parte todavía debe documentarse formalmente en el proyecto. La revisión p
 
 Cox, Ross y Rubinstein introducen el árbol binomial para valorar opciones. El precio evoluciona en pasos discretos hacia arriba o hacia abajo y se descuenta el valor esperado bajo una probabilidad riesgo-neutral.
 
-La aplicación al caso es directa: RTX y BA tienen opciones americanas, por lo que el árbol permite comparar en cada nodo el valor de continuar con el valor de ejercer inmediatamente.
+La aplicación al caso es directa: RTX, BA y LMT tienen opciones americanas, por lo que el árbol permite comparar en cada nodo el valor de continuar con el valor de ejercer inmediatamente.
 
 ## Opciones americanas
 
@@ -126,6 +129,27 @@ El feed `indicative` es gratuito y demorado. El feed `opra` es más apropiado pa
 ## Persistencia
 
 Los datos se guardan en Parquet particionado por subyacente y fecha. Junto al dataset se puede guardar un manifiesto con los supuestos usados: tasas, dividendos, umbrales, feed y parámetros del modelo.
+
+## Muestra sintética calibrada
+
+Como no hay NBBO histórico, la demo y la validación de los detectores usan un mercado generado. Para que sea un banco de pruebas válido, la muestra tiene que reproducir la distribución de cada activo real. La metodología completa está en `justificacion_generacion_datos.md`; el resumen es:
+
+- **Elección de activos.** RTX y BA, más LMT como tercer constituyente del ITA. Se descartó GE Aerospace porque su escisión de 2024 hace que la serie histórica no corresponda a la entidad actual. Los tres activos cubren regímenes distintos: BA con vol alta y colas muy gordas, RTX con vol media y distribución más simétrica, LMT con vol de base baja y saltos raros pero severos.
+- **Modelo.** Difusión con saltos de Merton bajo la medida riesgo-neutral. La vol total del proceso se fija igual a la IV at-the-money con la que se valúan las opciones, de modo que la vol realizada coincide con la implícita por construcción.
+- **Parámetros por activo** (fuentes públicas, septiembre de 2026):
+
+| Parámetro | RTX | BA | LMT |
+|---|---:|---:|---:|
+| Spot de referencia | 174 | 210 | 524 |
+| Dividendo continuo | 1,6% | 0% | 2,6% |
+| Vol total anual (= IV atm) | 28% | 36% | 26% |
+| Saltos por año | 6 | 8 | 4 |
+| Media / desvío del salto | −2,5% / 3,5% | −3,5% / 5,5% | −3,0% / 4,5% |
+| Skew / curvatura del smile | 0,35 / 0,90 | 0,55 / 1,30 | 0,35 / 0,85 |
+
+- **Validación.** Sobre 24 réplicas de 2.520 días, la vol simulada iguala al objetivo (28,0%, 36,0% y 26,0%), el skew es negativo en los tres (−0,45, −0,97 y −0,69) y el exceso de curtosis es positivo (+2,2, +6,3 y +4,6). `validate_sample.py` reproduce la tabla y la figura `outputs/validacion_distribucion.png`, y `tests/test_calibration.py` falla si algún cambio rompe ese parecido.
+
+El proceso tiene vol constante por activo: no modela clustering de volatilidad. Es una decisión consciente para mantener la coherencia con el árbol CRR de una sola sigma por contrato.
 
 # 5. Limpieza y controles de calidad
 
@@ -189,14 +213,14 @@ Se usa Brent en un intervalo acotado. Antes se controlan las cotas de no arbitra
 
 La corrida realizada produjo:
 
-- 1.248 cotizaciones;
+- 1.872 cotizaciones;
 - 12 cortes temporales;
-- 136 contratos;
-- 2 subyacentes;
+- 296 contratos;
+- 3 subyacentes (RTX, BA y LMT);
 - 100% de las cotizaciones con spot alineado;
-- 1.248 de 1.248 IV americanas invertidas;
-- IV mediana cercana a 32,4%;
-- rango aproximado entre 22,8% y 59,7%;
+- 1.872 de 1.872 IV americanas invertidas;
+- IV mediana cercana a 27,8%;
+- rango aproximado entre 24,7% y 73,9%;
 - cero filas fuera de las cotas de no arbitraje.
 
 Estos números demuestran que la implementación funciona sobre el mercado sintético generado por el proyecto. No son resultados de mercado real.
@@ -210,7 +234,7 @@ Hay que ejecutar el proceso sobre snapshots o datos históricos reales y present
 - precio observado contra precio CRR;
 - RMSE o MAE ponderado por vega;
 - comparación entre IV americana, IV europea e IV del proveedor;
-- análisis separado por RTX y BA.
+- análisis separado por RTX, BA y LMT.
 
 El código ya contiene `calibrate_chain_sigma()` para una sigma global, pero todavía no hay en el repositorio una tabla real con esos resultados.
 
@@ -255,7 +279,7 @@ Los umbrales por defecto son:
 | DTE mínimo | 7 días |
 | DTE máximo | 180 días |
 
-En la demo se conservaron 1.239 de 1.248 filas, un 99,3%. Nueve fueron excluidas por open interest insuficiente. Nuevamente, es un resultado sintético.
+En la demo se conservaron 1.855 de 1.872 filas, un 99,1%. Dieciséis fueron excluidas por open interest insuficiente y una por volumen insuficiente. Nuevamente, es un resultado sintético.
 
 La oportunidad se reporta con la liquidez de la peor pata: volumen mínimo, OI mínimo y máximo spread relativo. Esto evita mostrar un arbitraje de tres patas como líquido sólo porque dos patas lo son.
 
@@ -283,11 +307,11 @@ La demo sintética cubre una hora y tiene vencimientos varios meses después. Po
 
 | Latencia | Operaciones | P&L aproximado |
 |---:|---:|---:|
-| 1 minuto | 9 | -USD 1.019 |
-| 5 minutos | 9 | -USD 1.019 |
-| 15 minutos | 6 | -USD 864 |
+| 1 minuto | 9 | -USD 1.355 |
+| 5 minutos | 9 | -USD 1.355 |
+| 15 minutos | 9 | -USD 1.652 |
 
-El resultado negativo es coherente con pagar el spread de entrada y salida sin llegar a la liquidación final. No es una medida de rentabilidad de la estrategia.
+Las nueve posiciones cierran por fin de datos. El resultado negativo es coherente con pagar el spread de entrada y salida sin llegar a la liquidación final, y empeora con más latencia porque la ejecución se hace contra quotes más alejados de la señal. En el último corte no quedan oportunidades por encima del umbral de USD 5: las señales operadas surgen en cortes anteriores, donde están las dislocaciones inyectadas. No es una medida de rentabilidad de la estrategia.
 
 # 10. In-sample y out-of-sample
 
@@ -409,6 +433,10 @@ Las limitaciones deben declararse en la presentación:
 - se usa una tasa plana por defecto;
 - una sigma global no representa todo el smile;
 - una misma dislocación puede producir muchas oportunidades duplicadas;
+- la curva de tasas por plazo tiene un campo de configuración, pero todavía no se usa;
+- el recorder arma el universo una sola vez al arrancar y no refresca el maestro diario si queda corriendo varios días;
+- `enrich` toma el open interest del último maestro disponible, lo que anula el OI al procesar fechas pasadas;
+- los subcomandos de red de la CLI usan por defecto sólo RTX y BA; LMT hay que pasarlo con `--tickers`;
 - la historia previa al recorder conserva survivorship bias;
 - el demo no es evidencia de rentabilidad;
 - no existe todavía ejecución paper ni monitoreo en vivo.
@@ -447,4 +475,4 @@ La conclusión general para la exposición puede formularse así:
 
 ## Estado reproducible al preparar este informe
 
-La suite ejecutada con Python 3.14 produjo 26 tests exitosos. El demo offline recorrió generación sintética, alineación, IV, filtros, Parquet, detección y backtest. La capa de red no se ejecutó porque no estaban configuradas las credenciales de Alpaca.
+La suite ejecutada con Python 3.14.3 el 13 de septiembre de 2026 produjo 40 tests exitosos. El demo offline recorrió generación sintética calibrada, alineación, IV, filtros, Parquet, detección y backtest. La capa de red no se ejecutó porque no estaban configuradas las credenciales de Alpaca.

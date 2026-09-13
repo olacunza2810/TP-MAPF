@@ -1,7 +1,7 @@
 # Estado del proyecto — Grupo 3 (Defensa / ITA)
 
-Documento de traspaso. Última actualización: 5 de septiembre de 2026.
-Subyacentes: **RTX** y **BA**. Presentación Parte 1: **7 de septiembre**.
+Documento de traspaso. Última actualización: 13 de septiembre de 2026.
+Subyacentes: **RTX**, **BA** y **LMT**. Presentación Parte 1: **7 de septiembre**.
 
 ---
 
@@ -13,12 +13,12 @@ Requiere Python 3.11 o superior. Verificado en Python 3.14.3.
 cd "ruta\a\ita_options_pipeline"
 pip install -e ".[dev]"
 
-python -m pytest                        # 26 tests, ~5 segundos
+python -m pytest                        # 40 tests, ~8 segundos
 python -m ita_options.pipeline demo     # pipeline completo offline, ~50 segundos
 ```
 
 Ninguno de los dos necesita credenciales de Alpaca. Si `pytest` dice
-`26 passed`, todo lo que no depende de la red está funcionando.
+`40 passed`, todo lo que no depende de la red está funcionando.
 
 Cuando haya claves:
 

@@ -1,0 +1,4 @@
+# Credenciales: nunca versionar claves de Alpaca
+APIS.txt
+.env
+*.env

@@ -1,13 +1,15 @@
 # Pipeline de datos de opciones — Grupo 3 (Defensa / ITA)
 
-Extracción, alineación y curado de un dataset de opciones sobre **RTX** y **BA**
-para alimentar un backtest de arbitraje binomial sin sesgos.
+Extracción, alineación y curado de un dataset de opciones sobre **RTX**, **BA**
+y **LMT** (constituyentes individuales del ETF ITA) para alimentar un backtest de
+arbitraje binomial sin sesgos.
 
 ```
 ita_options/
 ├── config.py       Configuración tipada + manifiesto reproducible
 ├── schemas.py      Contrato de columnas y dtypes
 ├── volatility.py   BSM + árbol CRR americano + inversión de IV
+├── calibration.py  Perfiles calibrados por activo + jump-diffusion de Merton
 ├── clients.py      Gateway asincrónico sobre alpaca-py (rate limit + retries)
 ├── ingest.py       Universo, recorder point-in-time, backfill de bars
 ├── enrich.py       Alineación anti-lookahead, mid/spread, DTE, IV
@@ -16,15 +18,22 @@ ita_options/
 ├── arbitrage.py    Seis detectores: cinco model-free + uno contra modelo
 ├── backtest.py     Motor event-driven con barrera anti-lookahead
 ├── evaluation.py   Métricas, split in-sample/out-of-sample, Sharpe deflactado
+├── demo.py         Mercado sintético + corrida offline del pipeline completo
 ├── doctor.py       Diagnóstico de conectividad y datos disponibles
 └── pipeline.py     Orquestador + CLI
-tests/              25 tests, incluidos tests de contrato contra el SDK real
+tests/                         40 tests, incluidos tests de contrato contra el SDK real
+validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
+justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
+informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
+generate_report_pdf.py         Renderiza informe_proyecto.html a PDF
+ESTADO.md                      Documento de traspaso: qué está hecho y qué falta
 ```
 
 El grafo de dependencias es acíclico y tiene cuatro capas: `volatility`,
-`config` y `schemas` no dependen de nada; `arbitrage` depende sólo de
-`volatility`; `backtest` de `arbitrage`; `evaluation` de `backtest`. Por eso los
-detectores y el árbol se pueden testear sin credenciales ni red.
+`config`, `schemas` y `calibration` no dependen de nada; `arbitrage` depende
+sólo de `volatility`; `backtest` de `arbitrage`; `evaluation` de `backtest`; y
+`demo` usa `calibration` para generar el mercado. Por eso los detectores, el
+árbol y la calibración se pueden testear sin credenciales ni red.
 
 ## Instalación y uso
 
@@ -41,15 +50,25 @@ export ALPACA_API_KEY=... ALPACA_SECRET_KEY=...
 ```
 
 ```bash
-ita-options doctor                  # EMPEZAR ACÁ: diagnostica en 2 segundos
+ita-options demo                    # pipeline completo offline, sin credenciales (~1 min)
+ita-options doctor                  # EMPEZAR ACÁ con claves: diagnostica en 2 segundos
 ita-options universe                # maestro de contratos
 ita-options detect --min-edge 5     # arbitrajes sobre la cadena en vivo
 ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 25 tests, sin red ni credenciales
+pytest                              # 40 tests, sin red ni credenciales
+python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
+
+Si el comando `ita-options` no está en el PATH, usar
+`python -m ita_options.pipeline <subcomando>`.
+
+**Tickers.** Los perfiles calibrados y `PipelineConfig` usan RTX, BA y LMT,
+pero los subcomandos de red de la CLI toman por defecto `--tickers RTX BA`. Para
+incluir LMT hay que pasarlo explícito:
+`ita-options --tickers RTX BA LMT record`. La `demo` siempre usa los tres.
 
 `doctor` corre los seis chequeos en el orden en que el pipeline los necesita y
 se detiene en el primero que falla. Cada chequeo que pasa reporta una medición:
@@ -139,8 +158,8 @@ más interesan para detectar dislocaciones.
 
 Se calculan **dos** IVs por contrato:
 
-- `iv_american` — árbol CRR con ejercicio anticipado. Es la correcta: RTX y BA
-  son opciones americanas sobre acciones que pagan (o pagaron) dividendos.
+- `iv_american` — árbol CRR con ejercicio anticipado. Es la correcta: RTX, BA y
+  LMT tienen opciones americanas sobre acciones que pagan (o pagaron) dividendos.
 - `iv_european` — BSM cerrado, como control.
 
 La diferencia entre ambas cuantifica la prima de ejercicio anticipado. Reportar
@@ -200,8 +219,16 @@ una barra "envenenada" que verifica que el `merge_asof` no la consuma.
 
 ## Pendiente
 
-- Curva de tasas por tenor en vez de $r$ constante (el hook está en
-  `PricingAssumptions.risk_free_curve_path`).
+- Curva de tasas por tenor en vez de $r$ constante. El campo
+  `PricingAssumptions.risk_free_curve_path` existe pero **todavía ningún módulo
+  lo lee**: hoy siempre se usa `risk_free_rate`.
+- `record` arma el universo una sola vez al arrancar. Si queda corriendo varios
+  días no agrega el maestro diario que mitiga el survivorship bias; hay que
+  refrescarlo al cambiar la fecha.
+- `enrich` adjunta el open interest usando sólo el último `universe_*.parquet`.
+  Sobre fechas pasadas ese OI tiene fecha posterior al quote, se anula, y las
+  filas quedan excluidas por `open_interest_insuficiente`. Debería usar el
+  maestro correspondiente a cada `trade_date`.
 - Dividendos discretos en lugar de yield continuo — relevante para RTX cerca de
   la ex-date, donde se concentra el ejercicio anticipado de calls.
 - Vencimiento anclado a 20:00 UTC; el huso correcto (16:00 ET) importa sólo en
@@ -255,9 +282,27 @@ anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte
 pytest
 ```
 
-25 tests, sin red ni credenciales. La estrategia es generar los precios con el
+40 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
+
+`test_calibration.py` blinda la muestra sintética: falla si la vol simulada se
+aleja del objetivo, si el skew deja de ser negativo, si las colas dejan de ser
+gordas o si se rompe el ordenamiento entre activos.
+
+## Mercado sintético
+
+Alpaca no tiene bid/ask histórico de opciones, así que la demo y parte de la
+validación corren sobre un mercado generado. `calibration.py` define un perfil
+por activo (spot, dividendo, vol total, saltos, skew y curvatura del smile) y
+simula una difusión con saltos de Merton bajo la medida riesgo-neutral, con la
+vol total igual a la IV at-the-money: la vol realizada coincide con la implícita
+por construcción. La cadena se valúa con el árbol CRR sobre el smile de cada
+activo, así que no contiene arbitrajes salvo los inyectados a propósito.
+
+La metodología completa y los parámetros están en
+`justificacion_generacion_datos.md`; `python validate_sample.py` reproduce la
+tabla de momentos y la figura `outputs/validacion_distribucion.png`.
 
 `test_sdk_contract.py` construye los objetos que devuelve Alpaca y verifica que
 los adaptadores lean los campos correctos. Es la clase de test que detecta un
