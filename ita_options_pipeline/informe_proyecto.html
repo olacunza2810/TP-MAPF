@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Informe técnico para la presentación" />
+  <title>Pipeline de detección y backtesting de arbitrajes de opciones</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+  </style>
+  <link rel="stylesheet" href="informe_proyecto.css" />
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Pipeline de detección y backtesting de arbitrajes de
+opciones</h1>
+<p class="subtitle">Proyecto ITA - RTX y BA</p>
+<p class="author">Informe técnico para la presentación</p>
+<p class="date">5 de septiembre de 2026</p>
+</header>
+<h1 id="resumen-ejecutivo">Resumen ejecutivo</h1>
+<p>El proyecto construye un proceso reproducible para estudiar posibles
+arbitrajes de opciones sobre las acciones RTX y BA. El flujo parte de
+contratos y cotizaciones, limpia y alinea la información con controles
+contra lookahead bias, calcula volatilidad implícita mediante un árbol
+binomial americano, filtra contratos que no parecen operables, detecta
+inconsistencias de precios y finalmente simula la ejecución con costos,
+latencia y reglas de riesgo.</p>
+<p>La implementación técnica de las etapas de datos, limpieza,
+valuación, detección, backtesting y evaluación está avanzada y cuenta
+con tests. Sin embargo, el proyecto todavía no es un sistema completo en
+producción: la revisión de literatura no está documentada en el
+repositorio, no existe envío de órdenes de paper trading, no hay
+monitoreo conectado a una cuenta y no existe un P&amp;L real
+acumulado.</p>
+<p>La distinción central para la presentación es la siguiente:</p>
+<ul>
+<li>La demo offline demuestra que la cañería funciona.</li>
+<li>Los datos de la demo son sintéticos y no son evidencia de
+rentabilidad.</li>
+<li>La conexión real con Alpaca y la ejecución paper todavía deben
+completarse.</li>
+</ul>
+<h1 id="objetivo-y-pregunta-financiera">1. Objetivo y pregunta
+financiera</h1>
+<p>La pregunta del proyecto es si una cadena de opciones contiene
+precios incompatibles con relaciones de no arbitraje, y si esas
+diferencias son suficientemente grandes y líquidas como para intentar
+una estrategia multi-pata.</p>
+<p>No alcanza con comparar un precio observado contra un precio teórico.
+Una oportunidad debe cumplir simultáneamente varias condiciones:</p>
+<ol type="1">
+<li>La relación financiera debe ser correcta para opciones
+americanas.</li>
+<li>Las cotizaciones deben haber estado disponibles en ese
+instante.</li>
+<li>Debe poder comprarse al ask y venderse al bid.</li>
+<li>La señal debe sobrevivir comisiones, spread, borrow y latencia.</li>
+<li>Todas las patas deben tener liquidez suficiente.</li>
+<li>El resultado debe mantenerse fuera de muestra.</li>
+</ol>
+<p>Por eso el proyecto separa detectores model-free, basados en
+relaciones de no arbitraje, de un detector model-based, basado en el
+precio del árbol binomial.</p>
+<h1 id="arquitectura-del-proyecto">2. Arquitectura del proyecto</h1>
+<p>El flujo completo es:</p>
+<pre class="text"><code>Alpaca
+  -&gt; universo de contratos
+  -&gt; snapshots y barras históricas
+  -&gt; esquema y limpieza
+  -&gt; alineación temporal con el subyacente
+  -&gt; DTE, mid, spread e IV
+  -&gt; filtros de liquidez
+  -&gt; persistencia Parquet
+  -&gt; detectores de arbitraje
+  -&gt; backtest event-driven
+  -&gt; evaluación in-sample / out-of-sample</code></pre>
+<h2 id="módulos-principales">Módulos principales</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Módulo</th>
+<th>Función</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config.py</code></td>
+<td>Define subyacentes, tasas, dividendos, feed, límites y
+credenciales.</td>
+</tr>
+<tr>
+<td><code>clients.py</code></td>
+<td>Envuelve el SDK sincrónico de Alpaca con <code>asyncio</code>, rate
+limit, concurrencia y reintentos.</td>
+</tr>
+<tr>
+<td><code>ingest.py</code></td>
+<td>Descarga contratos, graba snapshots y hace backfill de barras.</td>
+</tr>
+<tr>
+<td><code>schemas.py</code></td>
+<td>Fija las columnas y tipos del dataset.</td>
+</tr>
+<tr>
+<td><code>enrich.py</code></td>
+<td>Calcula mid, spread, tiempo a vencimiento, alineación y
+volatilidad.</td>
+</tr>
+<tr>
+<td><code>volatility.py</code></td>
+<td>Implementa BSM, árbol CRR, cotas e inversión de IV.</td>
+</tr>
+<tr>
+<td><code>filters.py</code></td>
+<td>Marca contratos no explotables y produce un reporte auditable.</td>
+</tr>
+<tr>
+<td><code>arbitrage.py</code></td>
+<td>Implementa seis detectores y calcula el edge neto.</td>
+</tr>
+<tr>
+<td><code>storage.py</code></td>
+<td>Escribe y lee Parquet particionado y manifiestos.</td>
+</tr>
+<tr>
+<td><code>backtest.py</code></td>
+<td>Simula señales, ejecuciones, cierres, costos y stop-loss.</td>
+</tr>
+<tr>
+<td><code>evaluation.py</code></td>
+<td>Hace split temporal, grid search, métricas y Sharpe deflactado.</td>
+</tr>
+<tr>
+<td><code>pipeline.py</code></td>
+<td>Expone la CLI: <code>demo</code>, <code>doctor</code>,
+<code>record</code>, <code>backfill</code>, <code>enrich</code> y
+<code>detect</code>.</td>
+</tr>
+</tbody>
+</table>
+<h1 id="revisión-de-literatura-y-aplicación">3. Revisión de literatura y
+aplicación</h1>
+<p>Esta parte todavía debe documentarse formalmente en el proyecto. La
+revisión puede organizarse en cuatro grupos.</p>
+<h2 id="modelo-binomial">Modelo binomial</h2>
+<p>Cox, Ross y Rubinstein introducen el árbol binomial para valorar
+opciones. El precio evoluciona en pasos discretos hacia arriba o hacia
+abajo y se descuenta el valor esperado bajo una probabilidad
+riesgo-neutral.</p>
+<p>La aplicación al caso es directa: RTX y BA tienen opciones
+americanas, por lo que el árbol permite comparar en cada nodo el valor
+de continuar con el valor de ejercer inmediatamente.</p>
+<h2 id="opciones-americanas">Opciones americanas</h2>
+<p>La literatura sobre opciones americanas muestra que Black-Scholes
+europeo no captura correctamente el ejercicio anticipado. La
+aproximación de Barone-Adesi y Whaley y los trabajos de Broadie y
+Detemple sirven como referencias para justificar el tratamiento
+específico de opciones americanas.</p>
+<p>En el proyecto, Black-Scholes queda como control europeo, mientras
+que el árbol CRR es el modelo principal para la IV americana.</p>
+<h2 id="superficie-de-volatilidad">Superficie de volatilidad</h2>
+<p>La volatilidad no es constante entre strikes y vencimientos. En
+acciones suele observarse skew: las puts OTM pueden tener una IV mayor
+por la demanda de protección contra caídas.</p>
+<p>La demo genera una superficie con skew y smile. El código también
+advierte que una única sigma global puede producir supuestos arbitrajes
+en las alas cuando en realidad el problema es la mala especificación del
+modelo.</p>
+<h2 id="arbitraje-y-ejecución">Arbitraje y ejecución</h2>
+<p>Las relaciones de monotonicidad, convexidad, paridad put-call y
+calendarios permiten construir tests model-free. La literatura de
+microestructura y ejecución agrega el punto esencial: una anomalía
+matemática no es operable si el spread, la latencia o la falta de
+profundidad consumen el edge.</p>
+<h2 id="mensaje-de-la-literatura">Mensaje de la literatura</h2>
+<p>La aplicación al proyecto es:</p>
+<blockquote>
+<p>Primero se deben comprobar relaciones model-free con precios
+ejecutables. Después se puede usar el modelo binomial para detectar
+dislocaciones adicionales, pero esas señales tienen que interpretarse
+junto con el smile, la liquidez y la incertidumbre de los
+parámetros.</p>
+</blockquote>
+<h1 id="obtención-de-datos">4. Obtención de datos</h1>
+<h2 id="datos-disponibles-en-alpaca">Datos disponibles en Alpaca</h2>
+<p>El gateway utiliza:</p>
+<ul>
+<li>contratos de opciones y su open interest;</li>
+<li>snapshots con bid, ask, tamaños, último trade, IV y griegas;</li>
+<li>barras históricas de opciones;</li>
+<li>barras del subyacente.</li>
+</ul>
+<p>El subyacente se pide con <code>adjustment="raw"</code>. Las series
+ajustadas retroactivamente por dividendos o splits podrían incorporar
+información futura y además no estar expresadas en la misma convención
+que los strikes de las opciones.</p>
+<h2 id="limitación-del-histórico">Limitación del histórico</h2>
+<p>Alpaca no ofrece un histórico completo de NBBO de opciones. Por eso
+hay dos modos:</p>
+<ol type="1">
+<li><code>record</code>: graba snapshots desde el momento en que se
+prende el recorder. Es la fuente preferida para tener bid/ask real.</li>
+<li><code>backfill</code>: recupera barras pasadas y estima el spread.
+Sirve para extender la historia, pero queda marcado como proxy.</li>
+</ol>
+<p>El feed <code>indicative</code> es gratuito y demorado. El feed
+<code>opra</code> es más apropiado para tiempo real, pero requiere una
+suscripción adicional.</p>
+<h2 id="persistencia">Persistencia</h2>
+<p>Los datos se guardan en Parquet particionado por subyacente y fecha.
+Junto al dataset se puede guardar un manifiesto con los supuestos
+usados: tasas, dividendos, umbrales, feed y parámetros del modelo.</p>
+<h1 id="limpieza-y-controles-de-calidad">5. Limpieza y controles de
+calidad</h1>
+<h2 id="mid-y-spread">Mid y spread</h2>
+<p>Para cada quote se calcula:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi><mo>=</mo><mfrac><mrow><mi>b</mi><mi>i</mi><mi>d</mi><mo>+</mo><mi>a</mi><mi>s</mi><mi>k</mi></mrow><mn>2</mn></mfrac><mo>,</mo><mspace width="2.0em"></mspace><mi>s</mi><mi>p</mi><mi>r</mi><mi>e</mi><mi>a</mi><mi>d</mi><mo>=</mo><mi>a</mi><mi>s</mi><mi>k</mi><mo>−</mo><mi>b</mi><mi>i</mi><mi>d</mi><mo>,</mo><mspace width="2.0em"></mspace><mi>s</mi><mi>p</mi><mi>r</mi><mi>e</mi><mi>a</mi><mi>d</mi><mi>_</mi><mi>r</mi><mi>e</mi><mi>l</mi><mo>=</mo><mfrac><mrow><mi>a</mi><mi>s</mi><mi>k</mi><mo>−</mo><mi>b</mi><mi>i</mi><mi>d</mi></mrow><mi>m</mi></mfrac><mi>.</mi></mrow><annotation encoding="application/x-tex">m = \frac{bid + ask}{2}, \qquad spread = ask - bid, \qquad spread\_rel = \frac{ask-bid}{m}.</annotation></semantics></math></p>
+<p>El mid sirve para calibrar, pero no representa una ejecución
+garantizada. La ejecución compra al ask y vende al bid.</p>
+<h2 id="alineación-anti-lookahead">Alineación anti-lookahead</h2>
+<p>Las barras de un minuto se etiquetan por su inicio. El cierre de la
+barra 14:30 sólo se conoce después de las 14:31.
+<code>align_underlying()</code> desplaza la disponibilidad de la barra y
+usa un <code>merge_asof</code> hacia atrás.</p>
+<p>La función nunca toma una barra futura, aplica una tolerancia máxima
+y registra el retraso de alineación.</p>
+<h2 id="open-interest">Open interest</h2>
+<p>El OI publicado para un día puede conocerse recién después del
+cierre. Por eso se exige:</p>
+<pre class="text"><code>open_interest_date &lt; trade_date</code></pre>
+<p>Si el dato no estaba disponible todavía, se anula para ese quote.</p>
+<h2 id="survivorship-bias">Survivorship bias</h2>
+<p>Los contratos vencidos desaparecen del universo actual. El maestro
+append-only diario permite reconstruir qué contratos existían en cada
+fecha, pero no puede corregir períodos anteriores al comienzo de la
+grabación.</p>
+<h2 id="validación-técnica">Validación técnica</h2>
+<p>La suite cubre, entre otros casos:</p>
+<ul>
+<li>convergencia del CRR al europeo sin dividendos;</li>
+<li>paridad put-call europea;</li>
+<li>prima no negativa por ejercicio anticipado;</li>
+<li>round-trip de IV;</li>
+<li>alineación contra una barra envenenada para verificar que no se
+consuma futuro;</li>
+<li>contratos del SDK de Alpaca;</li>
+<li>detectores de arbitraje y backtest.</li>
+</ul>
+<h1 id="modelo-binomial-y-calibración">6. Modelo binomial y
+calibración</h1>
+<p>El árbol Cox-Ross-Rubinstein usa:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>u</mi><mo>=</mo><msup><mi>e</mi><mrow><mi>σ</mi><msqrt><mrow><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></msqrt></mrow></msup><mo>,</mo><mspace width="2.0em"></mspace><mi>d</mi><mo>=</mo><mfrac><mn>1</mn><mi>u</mi></mfrac><mo>,</mo><mspace width="2.0em"></mspace><mi>p</mi><mo>=</mo><mfrac><mrow><msup><mi>e</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>r</mi><mo>−</mo><mi>q</mi><mo stretchy="false" form="postfix">)</mo><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></msup><mo>−</mo><mi>d</mi></mrow><mrow><mi>u</mi><mo>−</mo><mi>d</mi></mrow></mfrac><mi>.</mi></mrow><annotation encoding="application/x-tex">u=e^{\sigma\sqrt{\Delta t}},\qquad d=\frac{1}{u},\qquad p=\frac{e^{(r-q)\Delta t}-d}{u-d}.</annotation></semantics></math></p>
+<p>En cada nodo se calcula el máximo entre ejercer y continuar:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>V</mi><mi>i</mi><mi>n</mi></msubsup><mo>=</mo><mrow><mi mathvariant="normal">max</mi><mo>&#8289;</mo></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">payoff</mtext><mo>,</mo><msup><mi>e</mi><mrow><mi>−</mi><mi>r</mi><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow></msup><mrow><mo stretchy="true" form="prefix">[</mo><mi>p</mi><msubsup><mi>V</mi><mrow><mi>i</mi><mo>+</mo><mn>1</mn></mrow><mrow><mi>n</mi><mo>+</mo><mn>1</mn></mrow></msubsup><mo>+</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="false" form="postfix">)</mo><msubsup><mi>V</mi><mi>i</mi><mrow><mi>n</mi><mo>+</mo><mn>1</mn></mrow></msubsup><mo stretchy="true" form="postfix">]</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">V_i^n = \max\left(\text{payoff}, e^{-r\Delta t}\left[pV_{i+1}^{n+1}+(1-p)V_i^{n+1}\right]\right).</annotation></semantics></math></p>
+<p>La IV se obtiene resolviendo:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mrow><mi>C</mi><mi>R</mi><mi>R</mi></mrow></msub><mo stretchy="false" form="prefix">(</mo><mi>σ</mi><mo stretchy="false" form="postfix">)</mo><mo>−</mo><msub><mi>V</mi><mrow><mi>m</mi><mi>e</mi><mi>r</mi><mi>c</mi><mi>a</mi><mi>d</mi><mi>o</mi></mrow></msub><mo>=</mo><mn>0</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">V_{CRR}(\sigma)-V_{mercado}=0.</annotation></semantics></math></p>
+<p>Se usa Brent en un intervalo acotado. Antes se controlan las cotas de
+no arbitraje. Un precio fuera de esas cotas se marca como dato inválido
+o posible arbitraje estático, pero no se fuerza una IV.</p>
+<h2 id="resultados-de-la-demo-offline">Resultados de la demo
+offline</h2>
+<p>La corrida realizada produjo:</p>
+<ul>
+<li>1.248 cotizaciones;</li>
+<li>12 cortes temporales;</li>
+<li>136 contratos;</li>
+<li>2 subyacentes;</li>
+<li>100% de las cotizaciones con spot alineado;</li>
+<li>1.248 de 1.248 IV americanas invertidas;</li>
+<li>IV mediana cercana a 32,4%;</li>
+<li>rango aproximado entre 22,8% y 59,7%;</li>
+<li>cero filas fuera de las cotas de no arbitraje.</li>
+</ul>
+<p>Estos números demuestran que la implementación funciona sobre el
+mercado sintético generado por el proyecto. No son resultados de mercado
+real.</p>
+<h2 id="qué-falta-para-afirmar-ajuste-a-la-superficie-observada">Qué
+falta para afirmar ajuste a la superficie observada</h2>
+<p>Hay que ejecutar el proceso sobre snapshots o datos históricos reales
+y presentar:</p>
+<ul>
+<li>gráfico de IV contra moneyness;</li>
+<li>gráfico de IV contra vencimiento;</li>
+<li>precio observado contra precio CRR;</li>
+<li>RMSE o MAE ponderado por vega;</li>
+<li>comparación entre IV americana, IV europea e IV del proveedor;</li>
+<li>análisis separado por RTX y BA.</li>
+</ul>
+<p>El código ya contiene <code>calibrate_chain_sigma()</code> para una
+sigma global, pero todavía no hay en el repositorio una tabla real con
+esos resultados.</p>
+<h1 id="detección-de-arbitrajes">7. Detección de arbitrajes</h1>
+<h2 id="detectores-model-free">Detectores model-free</h2>
+<p><code>arbitrage.py</code> implementa:</p>
+<ol type="1">
+<li>Monotonicidad vertical: el call debe bajar al subir el strike y la
+put debe subir.</li>
+<li>Cota del spread vertical: el valor del spread no puede superar su
+ancho.</li>
+<li>Convexidad o butterfly: la curva de precios debe ser convexa.</li>
+<li>Paridad put-call americana: se usan desigualdades, no la igualdad
+europea.</li>
+<li>Calendarios: una opción con mayor vencimiento no debería valer
+menos.</li>
+</ol>
+<p>Todos compran al ask y venden al bid. Se descartan quotes con bid o
+ask cero y se exige <code>is_tradable</code>.</p>
+<h2 id="detector-model-based">Detector model-based</h2>
+<p>El sexto detector compara el precio CRR contra bid y ask. Es una
+señal más débil porque depende de la sigma y de los supuestos de tasa,
+dividendos y ejercicio.</p>
+<h2 id="correcciones-relevantes">Correcciones relevantes</h2>
+<p>El proyecto corrige falsos positivos del notebook original:</p>
+<ul>
+<li>una butterfly con el signo invertido puede dar crédito hoy a cambio
+de payoff negativo;</li>
+<li>un calendario con las patas invertidas detecta el spread normal del
+mercado;</li>
+<li>un ask o bid cero no es una opción gratis, sino una cotización
+ausente;</li>
+<li>usar paridad europea sobre opciones americanas crea falsos positivos
+en puts ITM.</li>
+</ul>
+<h1 id="filtros-de-liquidez">8. Filtros de liquidez</h1>
+<p>Los umbrales por defecto son:</p>
+<table>
+<thead>
+<tr>
+<th>Criterio</th>
+<th style="text-align: right;">Umbral</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Volumen</td>
+<td style="text-align: right;">mayor que 0</td>
+</tr>
+<tr>
+<td>Open interest</td>
+<td style="text-align: right;">mayor que 50</td>
+</tr>
+<tr>
+<td>Bid</td>
+<td style="text-align: right;">mayor que 0</td>
+</tr>
+<tr>
+<td>Spread relativo</td>
+<td style="text-align: right;">menor que 15%</td>
+</tr>
+<tr>
+<td>Mid</td>
+<td style="text-align: right;">al menos USD 0,05</td>
+</tr>
+<tr>
+<td>DTE mínimo</td>
+<td style="text-align: right;">7 días</td>
+</tr>
+<tr>
+<td>DTE máximo</td>
+<td style="text-align: right;">180 días</td>
+</tr>
+</tbody>
+</table>
+<p>En la demo se conservaron 1.239 de 1.248 filas, un 99,3%. Nueve
+fueron excluidas por open interest insuficiente. Nuevamente, es un
+resultado sintético.</p>
+<p>La oportunidad se reporta con la liquidez de la peor pata: volumen
+mínimo, OI mínimo y máximo spread relativo. Esto evita mostrar un
+arbitraje de tres patas como líquido sólo porque dos patas lo son.</p>
+<h1 id="backtest-y-costos">9. Backtest y costos</h1>
+<p>El motor es event-driven. La señal ocurre en un timestamp y la
+ejecución ocurre después de una latencia configurable. En la ejecución
+se vuelven a cotizar todas las patas; si una dejó de cotizar, se rechaza
+la operación completa.</p>
+<p>Los supuestos principales son:</p>
+<ul>
+<li>comisión de USD 0,65 por contrato;</li>
+<li>multiplicador de 100 acciones;</li>
+<li>edge mínimo de USD 5;</li>
+<li>borrow anual de 0,50% para short del subyacente;</li>
+<li>spread aproximado de USD 0,01 en la acción;</li>
+<li>cierre al bid o ask según el sentido de la pata;</li>
+<li>límite de posiciones simultáneas;</li>
+<li>tamaño máximo por señal;</li>
+<li>stop-loss configurable.</li>
+</ul>
+<p>La barrera <code>PointInTimeView</code> no permite pedir datos
+posteriores al reloj. Esto controla lookahead por construcción, no sólo
+por convención.</p>
+<h2 id="resultado-de-la-demo">Resultado de la demo</h2>
+<p>La demo sintética cubre una hora y tiene vencimientos varios meses
+después. Por eso las posiciones se cierran por fin de datos y no por
+vencimiento:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Latencia</th>
+<th style="text-align: right;">Operaciones</th>
+<th style="text-align: right;">P&amp;L aproximado</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1 minuto</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">-USD 1.019</td>
+</tr>
+<tr>
+<td style="text-align: right;">5 minutos</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">-USD 1.019</td>
+</tr>
+<tr>
+<td style="text-align: right;">15 minutos</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">-USD 864</td>
+</tr>
+</tbody>
+</table>
+<p>El resultado negativo es coherente con pagar el spread de entrada y
+salida sin llegar a la liquidación final. No es una medida de
+rentabilidad de la estrategia.</p>
+<h1 id="in-sample-y-out-of-sample">10. In-sample y out-of-sample</h1>
+<p><code>evaluation.py</code> divide cronológicamente el dataset. Por
+defecto se puede usar 60% in-sample y 40% out-of-sample.</p>
+<p>La búsqueda de hiperparámetros puede variar:</p>
+<ul>
+<li>edge mínimo;</li>
+<li>spread máximo;</li>
+<li>open interest y volumen mínimos;</li>
+<li>DTE máximo;</li>
+<li>cantidad de posiciones;</li>
+<li>detectores activos;</li>
+<li>latencia;</li>
+<li>stop-loss;</li>
+<li>tamaño de la posición.</li>
+</ul>
+<p>La grilla registra todas las configuraciones probadas y no sólo la
+ganadora. Luego se calcula el Sharpe deflactado por la cantidad de
+pruebas, para reducir el riesgo de presentar como descubrimiento un
+máximo producido por data snooping.</p>
+<h2 id="pendiente-de-resultados">Pendiente de resultados</h2>
+<p>Todavía falta ejecutar y documentar una búsqueda real con:</p>
+<ul>
+<li>grilla concreta;</li>
+<li>mejor configuración in-sample;</li>
+<li>desempeño out-of-sample;</li>
+<li>curva de equity;</li>
+<li>drawdown;</li>
+<li>hit rate;</li>
+<li>edge capture;</li>
+<li>Sharpe y DSR.</li>
+</ul>
+<p>La infraestructura existe, pero la evidencia empírica todavía no está
+generada.</p>
+<h1 id="paper-trading">11. Paper trading</h1>
+<p>Esta parte no está implementada. El proyecto puede consultar
+contratos mediante <code>TradingClient</code>, pero no envía
+órdenes.</p>
+<p>Por ese motivo todavía no existen:</p>
+<ul>
+<li>capturas de órdenes;</li>
+<li>IDs de órdenes;</li>
+<li>fills parciales o completos;</li>
+<li>posiciones reales en paper;</li>
+<li>reconciliación de cuenta;</li>
+<li>P&amp;L acumulado real.</li>
+</ul>
+<p>Para cumplir esta parte hay que implementar una capa que reciba
+<code>leg_spec</code>, cree órdenes para todas las patas, espere fills,
+cancele órdenes incompletas y cierre la estrategia si falla una
+pata.</p>
+<p>La operación debe realizarse únicamente con
+<code>ALPACA_PAPER=true</code> y con tamaños mínimos durante la etapa de
+validación.</p>
+<h1 id="monitoreo-y-stop-loss">12. Monitoreo y stop-loss</h1>
+<p>El stop-loss actual sólo existe dentro del backtest. Por defecto se
+configura como una pérdida no realizada de USD 500 por posición, pero no
+está conectado a una cuenta ni a un proceso en vivo.</p>
+<p>El sistema de producción debería tener estos componentes:</p>
+<pre class="text"><code>Snapshot de mercado
+  -&gt; detector
+  -&gt; paper trader
+  -&gt; registro de órdenes y fills
+  -&gt; monitor de posiciones
+  -&gt; risk manager
+  -&gt; cierre automático</code></pre>
+<p>El monitor debe observar:</p>
+<ul>
+<li>P&amp;L realizado y no realizado;</li>
+<li>P&amp;L acumulado diario;</li>
+<li>drawdown;</li>
+<li>posiciones abiertas;</li>
+<li>exposición por subyacente y vencimiento;</li>
+<li>edge anunciado y edge capturado;</li>
+<li>latencia de ejecución;</li>
+<li>quotes stale;</li>
+<li>fills parciales;</li>
+<li>errores de API;</li>
+<li>pérdida por posición y pérdida diaria.</li>
+</ul>
+<p>El risk manager debería tener al menos:</p>
+<ul>
+<li>stop-loss por posición;</li>
+<li>stop-loss diario;</li>
+<li>límite de posiciones simultáneas;</li>
+<li>límite de exposición;</li>
+<li>cierre si falta una pata;</li>
+<li>cierre si el quote se vuelve stale;</li>
+<li>cierre si se pierde conexión;</li>
+<li>botón de emergencia.</li>
+</ul>
+<h1 id="qué-está-terminado-y-qué-falta">13. Qué está terminado y qué
+falta</h1>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Etapa de la consigna</th>
+<th>Estado actual</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Literatura</td>
+<td>Falta documentar la revisión y sus referencias.</td>
+</tr>
+<tr>
+<td>Obtención de datos</td>
+<td>Código para Alpaca, pero conexión real no probada.</td>
+</tr>
+<tr>
+<td>Limpieza y calidad</td>
+<td>Implementada y testeada.</td>
+</tr>
+<tr>
+<td>Calibración binomial</td>
+<td>Implementada y testeada sobre datos sintéticos.</td>
+</tr>
+<tr>
+<td>Detección de arbitrajes</td>
+<td>Implementada y testeada.</td>
+</tr>
+<tr>
+<td>Backtest realista</td>
+<td>Implementado con costos, latencia y barrera anti-lookahead.</td>
+</tr>
+<tr>
+<td>In-sample / out-of-sample</td>
+<td>Infraestructura implementada; faltan resultados reales
+documentados.</td>
+</tr>
+<tr>
+<td>Paper trading</td>
+<td>Falta implementar envío y seguimiento de órdenes.</td>
+</tr>
+<tr>
+<td>Monitoreo productivo</td>
+<td>Falta implementar.</td>
+</tr>
+<tr>
+<td>Stop-loss productivo</td>
+<td>Sólo existe en el backtest.</td>
+</tr>
+<tr>
+<td>P&amp;L acumulado real</td>
+<td>No disponible.</td>
+</tr>
+</tbody>
+</table>
+<h1 id="limitaciones-técnicas">14. Limitaciones técnicas</h1>
+<p>Las limitaciones deben declararse en la presentación:</p>
+<ul>
+<li>no hay bid/ask histórico completo de opciones en Alpaca;</li>
+<li>el feed gratuito está demorado;</li>
+<li>las barras históricas usan un spread proxy;</li>
+<li>no se limita aún el tamaño por profundidad real del libro;</li>
+<li>no se modela asignación anticipada;</li>
+<li>se usan dividendos continuos en lugar de dividendos discretos;</li>
+<li>se usa una tasa plana por defecto;</li>
+<li>una sigma global no representa todo el smile;</li>
+<li>una misma dislocación puede producir muchas oportunidades
+duplicadas;</li>
+<li>la historia previa al recorder conserva survivorship bias;</li>
+<li>el demo no es evidencia de rentabilidad;</li>
+<li>no existe todavía ejecución paper ni monitoreo en vivo.</li>
+</ul>
+<h1 id="conclusiones">15. Conclusiones</h1>
+<p>El proyecto construye una base rigurosa para investigar arbitraje de
+opciones. Su aporte principal no es afirmar que ya encontró una
+estrategia rentable, sino mostrar cómo debe validarse una señal antes de
+considerarla operable.</p>
+<p>Las conclusiones técnicas son:</p>
+<ol type="1">
+<li>El modelo binomial americano es más apropiado que Black-Scholes
+europeo para las opciones analizadas.</li>
+<li>Las relaciones model-free son la evidencia más fuerte porque no
+dependen de una sigma correcta.</li>
+<li>El bid-ask, la latencia y la liquidez pueden eliminar completamente
+el edge teórico.</li>
+<li>El control temporal de los datos es tan importante como la fórmula
+de valuación.</li>
+<li>La ausencia de NBBO histórico limita fuertemente cualquier backtest
+retrospectivo.</li>
+<li>La demo verifica la cañería, pero no prueba rentabilidad.</li>
+<li>Antes de presentar P&amp;L real hay que grabar datos propios,
+ejecutar paper trading y monitorear fills.</li>
+</ol>
+<p>La conclusión general para la exposición puede formularse así:</p>
+<blockquote>
+<p>Una inconsistencia matemática no es automáticamente una oportunidad
+de trading. Para que sea explotable debe existir una cotización
+ejecutable, liquidez en todas las patas, una relación financiera
+correcta para opciones americanas, costos y latencia compatibles, y un
+resultado que sobreviva fuera de muestra.</p>
+</blockquote>
+<h1 id="guion-sugerido-para-la-presentación">16. Guion sugerido para la
+presentación</h1>
+<ol type="1">
+<li>Presentar el objetivo y el flujo general del pipeline.</li>
+<li>Explicar la limitación de datos de Alpaca y la diferencia entre
+snapshot real y barra con spread proxy.</li>
+<li>Mostrar el control anti-lookahead y el esquema de calidad.</li>
+<li>Introducir el árbol CRR y comparar IV americana contra europea.</li>
+<li>Mostrar la superficie de volatilidad y el RMSE real cuando se genere
+con datos de mercado.</li>
+<li>Explicar los cinco detectores model-free y el detector contra
+modelo.</li>
+<li>Mostrar el reporte de filtros de liquidez.</li>
+<li>Explicar la latencia, costos y barrera <code>PointInTimeView</code>
+del backtest.</li>
+<li>Mostrar la tabla in-sample / out-of-sample y el DSR cuando se
+ejecute sobre datos reales.</li>
+<li>Presentar órdenes paper, fills y P&amp;L sólo después de implementar
+esa capa.</li>
+<li>Cerrar con el diseño del monitor, stop-loss y limitaciones.</li>
+</ol>
+<h2 id="estado-reproducible-al-preparar-este-informe">Estado
+reproducible al preparar este informe</h2>
+<p>La suite ejecutada con Python 3.14 produjo 26 tests exitosos. El demo
+offline recorrió generación sintética, alineación, IV, filtros, Parquet,
+detección y backtest. La capa de red no se ejecutó porque no estaban
+configuradas las credenciales de Alpaca.</p>
+</body>
+</html>
