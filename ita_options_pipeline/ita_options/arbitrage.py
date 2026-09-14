@@ -28,7 +28,7 @@ from __future__ import annotations
 import itertools
 import logging
 from dataclasses import dataclass
-from typing import Iterator, Literal, Sequence
+from typing import Iterator, Literal, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -47,6 +47,7 @@ __all__ = [
     "calibrate_chain_sigma",
     "detect_model_dislocation",
     "run_all_detectors",
+    "execution_edge",
 ]
 
 DetectorName = Literal[
@@ -944,3 +945,53 @@ def run_all_detectors(
         return _empty_result()
     combined = pd.concat(frames, ignore_index=True)
     return combined.sort_values("net_edge_usd", ascending=False).reset_index(drop=True)
+
+
+def execution_edge(
+    signal: Mapping[str, object],
+    fills: Sequence[float],
+    costs: ExecutionCosts,
+    contracts: float = 1.0,
+) -> float:
+    r"""Edge en USD de una señal re-cotizada con los precios de ejecución.
+
+    Es la fórmula única que usan el backtest y la ejecución en vivo. El crédito
+    de cada detector tiene una parte de caja (lo que se cobra al armar las
+    patas) y, en algunos, una parte estructural que no depende de los precios:
+    el ancho del spread vertical, el strike descontado de la paridad o el valor
+    del modelo. Esa parte se obtiene de la propia señal,
+
+    .. math::
+
+        	ext{estructural} = 	ext{crédito bruto} - 	ext{caja}_{	ext{señal}},
+
+    y el edge al ejecutar es
+    :math:`	ext{caja}_{	ext{ejecución}} + 	ext{estructural} - 	ext{comisión}`,
+    con la misma comisión que usó el detector. Si los precios no se movieron,
+    coincide exactamente con ``net_edge_usd``.
+
+    Args:
+        signal: Fila de oportunidad con ``leg_spec``, ``gross_credit`` y
+            ``commission``.
+        fills: Precio de ejecución de cada pata, en el orden de ``leg_spec``.
+        costs: Costos, para el multiplicador.
+        contracts: Tamaño de la posición.
+
+    Returns:
+        Edge neto en USD para ``contracts`` unidades.
+
+    Raises:
+        ValueError: si la cantidad de precios no coincide con la de patas.
+    """
+    legs = tuple(signal["leg_spec"])  # type: ignore[arg-type]
+    if len(fills) != len(legs):
+        raise ValueError(
+            f"Se recibieron {len(fills)} precios para {len(legs)} patas."
+        )
+    multiplier = costs.multiplier
+    signal_cash = -sum(float(leg["qty"]) * float(leg["price"]) for leg in legs) * multiplier
+    cash = -sum(
+        float(leg["qty"]) * float(fill) for leg, fill in zip(legs, fills, strict=True)
+    ) * multiplier
+    structural = float(signal["gross_credit"]) * multiplier - signal_cash  # type: ignore[arg-type]
+    return (cash + structural - float(signal["commission"])) * contracts  # type: ignore[arg-type]

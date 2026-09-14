@@ -13,12 +13,12 @@ Requiere Python 3.11 o superior. Verificado en Python 3.14.3.
 cd "ruta\a\ita_options_pipeline"
 pip install -e ".[dev]"
 
-python -m pytest                        # 59 tests, ~20 segundos
+python -m pytest                        # 78 tests, ~25 segundos
 python -m ita_options.pipeline demo     # pipeline completo offline, ~50 segundos
 ```
 
 Ninguno de los dos necesita credenciales de Alpaca. Si `pytest` dice
-`59 passed`, todo lo que no depende de la red está funcionando.
+`78 passed`, todo lo que no depende de la red está funcionando.
 
 Cuando haya claves:
 
@@ -48,7 +48,7 @@ Si `python --version` no dice 3.14, usar `py -3.14 -m ...` en todos los comandos
 | | |
 |---|---|
 | 1. Revisión de literatura | **Sin empezar.** No depende de nada técnico. |
-| 8. Ejecución en paper trading | No existe código de órdenes. |
+| 8. Ejecución en paper trading | Fase 0 lista (`doctor` con permisos, `scripts/paper_probe.py`) y núcleo de fase 1 sin envío (`execution/orders.py`, `execution/risk.py`). Falta correr la prueba en paper, la secuencia de paridad, estado, loop intradía y reporte. |
 | 9. Monitoreo y stop-loss en producción | El stop-loss existe dentro del backtest, no en vivo. |
 | AI log | Sin armar. La consigna lo pide como entregable obligatorio. |
 

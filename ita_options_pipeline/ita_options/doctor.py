@@ -10,10 +10,15 @@ trae el universo, qué cobertura de open interest hay, cuántos snapshots vienen
 con NBBO real y cuál es el spread mediano. Eso último es lo que determina si la
 estrategia es viable: si el spread mediano es del 40%, no hay arbitraje que
 sobreviva a cruzarlo.
+
+Para operar en paper se agregan dos chequeos: los permisos de la cuenta (los
+spreads multi-leg exigen nivel 3 de opciones, y la conversión reversa necesita
+short habilitado) y el reloj de mercado.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
@@ -27,7 +32,28 @@ from .config import PipelineConfig
 
 _LOG = logging.getLogger(__name__)
 
-__all__ = ["CheckResult", "run_diagnostics", "format_report"]
+__all__ = [
+    "CheckResult",
+    "MIN_OPTIONS_LEVEL_FOR_SPREADS",
+    "evaluate_account",
+    "describe_clock",
+    "run_diagnostics",
+    "format_report",
+]
+
+#: Nivel de opciones de Alpaca que habilita spreads y órdenes multi-leg.
+MIN_OPTIONS_LEVEL_FOR_SPREADS = 3
+
+_CHECK_NAMES = (
+    "1. Autenticación",
+    "2. Permisos de opciones y cuenta",
+    "3. Reloj de mercado",
+    "4. Precios del subyacente",
+    "5. Universo de contratos",
+    "6. NBBO en vivo (modo record)",
+    "7. Barras históricas (modo backfill)",
+    "8. Viabilidad de la estrategia",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +71,69 @@ class CheckResult:
     passed: bool
     detail: str
     blocking: bool = True
+
+
+def _as_int(value: Any) -> int | None:
+    """Nivel de opciones como entero, venga como int, str o enum."""
+    raw = getattr(value, "value", value)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def evaluate_account(account: Any, paper: bool) -> CheckResult:
+    """Evalúa si la cuenta puede operar las estrategias del proyecto.
+
+    - Nivel de opciones mayor o igual a 3: spreads y órdenes ``mleg``.
+    - Buying power de opciones: margen disponible para abrir estructuras.
+    - ``shorting_enabled``: la conversión reversa vende la acción en corto.
+
+    No es bloqueante: sin nivel 3 igual se puede grabar datos y detectar.
+
+    Args:
+        account: ``TradeAccount`` devuelto por ``TradingClient.get_account``.
+        paper: Si las credenciales apuntan a la cuenta paper.
+    """
+    trading_level = _as_int(getattr(account, "options_trading_level", None))
+    approved_level = _as_int(getattr(account, "options_approved_level", None))
+    level = trading_level if trading_level is not None else approved_level
+    buying_power = _as_float(getattr(account, "options_buying_power", None))
+    shorting = bool(getattr(account, "shorting_enabled", False))
+    multiplier = _as_float(getattr(account, "multiplier", None))
+
+    passed = level is not None and level >= MIN_OPTIONS_LEVEL_FOR_SPREADS
+    level_text = str(level) if level is not None else "?"
+    approved_text = str(approved_level) if approved_level is not None else "?"
+    detail = (
+        f"{'paper' if paper else 'LIVE'} | nivel de opciones {level_text} "
+        f"(aprobado {approved_text}) | buying power de opciones "
+        f"{buying_power:,.0f} USD | short "
+        f"{'habilitado' if shorting else 'NO habilitado'} | multiplicador {multiplier:g}"
+    )
+    if not passed:
+        detail += (
+            f" -> los spreads multi-leg requieren nivel {MIN_OPTIONS_LEVEL_FOR_SPREADS}"
+        )
+    elif not shorting:
+        detail += " -> sin short no se pueden operar conversiones reversas"
+    if not paper:
+        detail += " -> ATENCIÓN: credenciales de cuenta real"
+    return CheckResult(_CHECK_NAMES[1], passed, detail, blocking=False)
+
+
+def describe_clock(clock: Any) -> str:
+    """Resume el reloj de mercado de Alpaca en una línea."""
+    if getattr(clock, "is_open", False):
+        return f"mercado abierto; cierra {getattr(clock, 'next_close', '?')}"
+    return f"mercado cerrado; próxima apertura {getattr(clock, 'next_open', '?')}"
 
 
 async def _probe(
@@ -88,18 +177,24 @@ async def run_diagnostics(config: PipelineConfig) -> list[CheckResult]:
     state: dict[str, Any] = {}
 
     async def check_auth() -> str:
-        import asyncio
-
         account = await asyncio.to_thread(gateway._trading.get_account)
+        state["account"] = account
         return (
             f"cuenta {getattr(account, 'account_number', '?')}, "
             f"estado {getattr(account, 'status', '?')}, "
             f"{'paper' if config.credentials.paper else 'LIVE'}"
         )
 
-    results.append(await _probe("1. Autenticación", check_auth))
+    results.append(await _probe(_CHECK_NAMES[0], check_auth))
     if not results[-1].passed:
-        return _skip_rest(results, 5)
+        return _skip_rest(results)
+
+    results.append(evaluate_account(state["account"], config.credentials.paper))
+
+    async def check_clock() -> str:
+        return describe_clock(await asyncio.to_thread(gateway._trading.get_clock))
+
+    results.append(await _probe(_CHECK_NAMES[2], check_clock, blocking=False))
 
     async def check_stock() -> str:
         bars = await gateway.fetch_underlying_bars(
@@ -115,9 +210,9 @@ async def run_diagnostics(config: PipelineConfig) -> list[CheckResult]:
         precios = ", ".join(f"{k}={v:.2f}" for k, v in state["spots"].items())
         return f"{len(frame)} barras; último cierre: {precios}"
 
-    results.append(await _probe("2. Precios del subyacente", check_stock))
+    results.append(await _probe(_CHECK_NAMES[3], check_stock))
     if not results[-1].passed:
-        return _skip_rest(results, 4)
+        return _skip_rest(results)
 
     async def check_universe() -> str:
         contracts = await gateway.fetch_option_contracts(
@@ -138,9 +233,9 @@ async def run_diagnostics(config: PipelineConfig) -> list[CheckResult]:
             f"{with_oi} ({with_oi / len(contracts):.0%}) con open interest"
         )
 
-    results.append(await _probe("3. Universo de contratos", check_universe))
+    results.append(await _probe(_CHECK_NAMES[4], check_universe))
     if not results[-1].passed:
-        return _skip_rest(results, 3)
+        return _skip_rest(results)
 
     async def check_snapshots() -> str:
         symbols = [c.symbol for c in state["contracts"][:100]]
@@ -169,7 +264,7 @@ async def run_diagnostics(config: PipelineConfig) -> list[CheckResult]:
             f"{state['median_spread']:.1%}"
         )
 
-    results.append(await _probe("4. NBBO en vivo (modo record)", check_snapshots))
+    results.append(await _probe(_CHECK_NAMES[5], check_snapshots))
 
     async def check_bars() -> str:
         symbols = [c.symbol for c in state["contracts"][:20]]
@@ -184,38 +279,27 @@ async def run_diagnostics(config: PipelineConfig) -> list[CheckResult]:
             "contratos (sin bid/ask: el spread se estima)"
         )
 
-    results.append(
-        await _probe("5. Barras históricas (modo backfill)", check_bars, blocking=False)
-    )
+    results.append(await _probe(_CHECK_NAMES[6], check_bars, blocking=False))
 
     def check_viability() -> CheckResult:
         spread = state.get("median_spread", float("nan"))
         threshold = config.liquidity.max_relative_spread
         if not np.isfinite(spread):
-            return CheckResult(
-                "6. Viabilidad de la estrategia", False, "sin datos de spread", False
-            )
+            return CheckResult(_CHECK_NAMES[7], False, "sin datos de spread", False)
         passed = spread < threshold
         verdict = (
             f"spread mediano {spread:.1%} vs umbral {threshold:.0%}: "
             + ("hay margen para operar" if passed else "el spread se come el edge")
         )
-        return CheckResult("6. Viabilidad de la estrategia", passed, verdict, False)
+        return CheckResult(_CHECK_NAMES[7], passed, verdict, False)
 
     results.append(check_viability())
     return results
 
 
-def _skip_rest(results: list[CheckResult], remaining: int) -> list[CheckResult]:
+def _skip_rest(results: list[CheckResult]) -> list[CheckResult]:
     """Marca como omitidos los chequeos que no se ejecutaron."""
-    names = [
-        "2. Precios del subyacente",
-        "3. Universo de contratos",
-        "4. NBBO en vivo (modo record)",
-        "5. Barras históricas (modo backfill)",
-        "6. Viabilidad de la estrategia",
-    ]
-    for name in names[-remaining:]:
+    for name in _CHECK_NAMES[len(results):]:
         results.append(CheckResult(name, False, "omitido: falló un paso anterior", False))
     return results
 
@@ -250,5 +334,6 @@ def format_report(results: list[CheckResult]) -> str:
             )
         lines.append("")
         lines.append("  Siguiente paso:  python -m ita_options.pipeline record")
+        lines.append("  Paper trading:   python scripts/paper_probe.py (fase 0)")
     lines.append("")
     return "\n".join(lines)

@@ -19,9 +19,10 @@ ita_options/
 ├── backtest.py     Motor event-driven con barrera anti-lookahead
 ├── evaluation.py   Métricas, split in-sample/out-of-sample, Sharpe deflactado
 ├── demo.py         Mercado sintético + corrida offline del pipeline completo
-├── doctor.py       Diagnóstico de conectividad y datos disponibles
+├── doctor.py       Diagnóstico de conectividad, permisos de cuenta y datos disponibles
+├── execution/      Paper trading: órdenes mleg (orders.py) y riesgo previo (risk.py)
 └── pipeline.py     Orquestador + CLI
-tests/                         59 tests, incluidos tests de contrato contra el SDK real
+tests/                         78 tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
 informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
@@ -58,7 +59,7 @@ ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 59 tests, sin red ni credenciales
+pytest                              # 78 tests, sin red ni credenciales
 python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
 
@@ -336,13 +337,51 @@ convención sino una barrera.
 Sharpe deflactado por cantidad de configuraciones probadas. A igual Sharpe
 anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte.
 
+## Paper trading con Alpaca (en construcción)
+
+Hoy el código **no envía órdenes de estrategia**. Qué hay:
+
+- **`doctor`**: además de conectividad y datos, verifica nivel de opciones (los spreads `mleg` requieren nivel 3), buying power de opciones, short habilitado y reloj de mercado.
+- **`ita_options/execution/orders.py`**: traduce el `leg_spec` de una señal a un `LimitOrderRequest` `mleg`.
+  - Pesos a `ratio_qty` enteros con MCD 1.
+  - Rechaza patas de acción, que Alpaca no admite en `mleg`.
+  - `client_order_id` determinístico.
+- **`ita_options/execution/risk.py`**: controles previos al envío.
+  - Pérdida máxima al vencimiento contra buying power y tope.
+  - Profundidad del NBBO.
+  - Fecha ex-dividendo en paridades.
+  - Short disponible.
+- **`arbitrage.execution_edge`**: la misma fórmula de edge residual que usa el backtest.
+- **`scripts/paper_probe.py`**: pruebas de la fase 0 en la cuenta paper. Averigua:
+  - el signo del `limit_price` de las `mleg`;
+  - si Alpaca acepta una conversión con la acción comprada antes;
+  - si acepta una reversa con la acción en corto.
+
+  Sin `--submit` sólo muestra el plan. Con `--submit` exige mercado abierto y limpia órdenes y posiciones al terminar.
+
+```powershell
+python -m ita_options.pipeline doctor
+python scripts/paper_probe.py --underlying RTX            # plan
+python scripts/paper_probe.py --underlying RTX --submit   # en paper, con mercado abierto
+```
+
+Falta:
+
+- secuencia de la paridad en patas separadas;
+- estado y reconciliación;
+- loop intradía `paper-run`;
+- kill-switch en vivo;
+- reporte de sesión.
+
+Dependen de lo que responda la prueba. Con el feed `indicative`, el piloto valida la cañería de órdenes, no el edge.
+
 ## Tests
 
 ```bash
 pytest
 ```
 
-59 tests, sin red ni credenciales. La estrategia es generar los precios con el
+78 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
 

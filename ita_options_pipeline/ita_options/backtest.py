@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from .arbitrage import ExecutionCosts, run_all_detectors
+from .arbitrage import ExecutionCosts, execution_edge, run_all_detectors
 
 _LOG = logging.getLogger(__name__)
 _NY = ZoneInfo("America/New_York")
@@ -493,7 +493,6 @@ class ArbitrageBacktester:
 
         at_open = params.execution_price == "open"
         cash = 0.0
-        signal_cash = 0.0
         refreshed: list[dict[str, Any]] = []
         for leg in legs:
             if leg["kind"] == "stock":
@@ -519,20 +518,19 @@ class ArbitrageBacktester:
                 if not np.isfinite(fill) or fill <= 0:
                     return None, "no_quote"
             cash -= leg["qty"] * fill * self._costs.multiplier
-            signal_cash -= leg["qty"] * float(leg["price"]) * self._costs.multiplier
             refreshed.append({**leg, "price": fill})
 
-        structural = float(signal["gross_credit"]) * self._costs.multiplier - signal_cash
-        execution_edge = (
-            cash + structural - float(signal["commission"])
-        ) * params.contracts_per_trade
+        residual_edge = execution_edge(
+            signal, [leg["price"] for leg in refreshed], self._costs,
+            params.contracts_per_trade,
+        )
         if params.require_edge_at_execution:
             threshold = (
                 params.min_edge_at_execution
                 if params.min_edge_at_execution is not None
                 else params.min_net_edge
             ) * params.contracts_per_trade
-            if not execution_edge >= threshold:
+            if not residual_edge >= threshold:
                 return None, "edge_gone"
 
         n_legs = len(refreshed) * params.contracts_per_trade
@@ -553,7 +551,7 @@ class ArbitrageBacktester:
             predicted_edge=float(signal["net_edge_usd"]) * params.contracts_per_trade,
             expiration=max(expirations) if expirations else pd.NaT,
             signal_at=signal_at,
-            execution_edge=execution_edge,
+            execution_edge=residual_edge,
         ), "filled"
 
     def _close(
