@@ -16,7 +16,9 @@ from ita_options.backtest import (
 from ita_options.evaluation import (
     compute_metrics,
     deflated_sharpe_ratio,
+    signal_funnel,
     split_in_sample,
+    trade_breakdown,
 )
 
 COSTS = ExecutionCosts(min_net_edge=1.0)
@@ -72,6 +74,48 @@ def test_la_latencia_cambia_el_resultado(timeseries_chain) -> None:
         )
     )
     assert fast.total_pnl > slow.total_pnl
+
+
+def test_no_ejecuta_si_el_edge_desaparecio(timeseries_chain) -> None:
+    """La dislocación dura dos cortes: con 20 minutos de demora ya no existe.
+
+    Sin el control se ejecuta igual y se paga el spread por nada; con el control
+    la señal se rechaza y queda contada en el embudo.
+    """
+    quotes, underlying = timeseries_chain
+    engine = ArbitrageBacktester(quotes, underlying, COSTS)
+    base = {"min_net_edge": 1.0, "execution_lag": timedelta(minutes=20),
+            "stop_loss_usd": None}
+
+    checked = engine.run(StrategyParams(**base))
+    legacy = engine.run(StrategyParams(**base, require_edge_at_execution=False))
+
+    assert checked.trades.empty
+    assert checked.diagnostics["rejected_edge_gone"] > 0
+    assert not legacy.trades.empty
+
+
+def test_embudo_y_desglose_cuadran(timeseries_chain) -> None:
+    """Cada señal encolada termina en un solo destino y el desglose suma el total."""
+    quotes, underlying = timeseries_chain
+    result = ArbitrageBacktester(quotes, underlying, COSTS).run(
+        StrategyParams(min_net_edge=1.0, execution_lag=timedelta(minutes=5),
+                       stop_loss_usd=None)
+    )
+    assert not result.trades.empty
+    assert (result.trades["execution_edge"] >= 1.0).all()
+    assert (result.trades["opened_at"] > result.trades["signal_at"]).all()
+
+    total = signal_funnel(result).set_index("detector").loc["TOTAL"]
+    outcomes = (total["ejecutadas"] + total["edge_desaparecido"] + total["sin_precio"]
+                + total["sin_capacidad"] + total["pendientes_al_final"])
+    assert total["detectadas"] >= total["encoladas"] == outcomes
+    assert total["ejecutadas"] == len(result.trades)
+
+    by_detector = trade_breakdown(result, "detector")
+    assert by_detector["operaciones"].sum() == len(result.trades)
+    assert by_detector["pnl_total"].sum() == pytest.approx(result.total_pnl)
+    assert trade_breakdown(result, "exit_reason")["operaciones"].sum() == len(result.trades)
 
 
 def test_el_split_no_se_solapa(timeseries_chain) -> None:

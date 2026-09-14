@@ -13,12 +13,12 @@ Requiere Python 3.11 o superior. Verificado en Python 3.14.3.
 cd "ruta\a\ita_options_pipeline"
 pip install -e ".[dev]"
 
-python -m pytest                        # 49 tests, ~12 segundos
+python -m pytest                        # 58 tests, ~17 segundos
 python -m ita_options.pipeline demo     # pipeline completo offline, ~50 segundos
 ```
 
 Ninguno de los dos necesita credenciales de Alpaca. Si `pytest` dice
-`49 passed`, todo lo que no depende de la red está funcionando.
+`58 passed`, todo lo que no depende de la red está funcionando.
 
 Cuando haya claves:
 

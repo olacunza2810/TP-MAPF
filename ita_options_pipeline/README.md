@@ -21,7 +21,7 @@ ita_options/
 ├── demo.py         Mercado sintético + corrida offline del pipeline completo
 ├── doctor.py       Diagnóstico de conectividad y datos disponibles
 └── pipeline.py     Orquestador + CLI
-tests/                         49 tests, incluidos tests de contrato contra el SDK real
+tests/                         58 tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
 informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
@@ -58,7 +58,7 @@ ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 49 tests, sin red ni credenciales
+pytest                              # 58 tests, sin red ni credenciales
 python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
 
@@ -118,7 +118,20 @@ $env:POLYGON_API_KEY="..."
 python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31 --dry-run   # plan y horas, sin red
 python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31
 python -m ita_options.pipeline --tickers RTX BA LMT enrich-daily --price-source close --assumed-spread 0.05
-python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2
+python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --report-dir reportes
+```
+
+`--tickers` puede ir antes o después del subcomando, con espacios o comas
+(`--tickers RTX,BA,LMT`). Para una grilla sobre el spread supuesto se re-cura
+entre backtests; `--report-dir` acumula una fila por configuración en
+`summary.csv` y guarda operaciones, embudo y desgloses de cada una:
+
+```powershell
+foreach ($s in 0.02, 0.05) {
+  python -m ita_options.pipeline --tickers RTX BA LMT enrich-daily --assumed-spread $s
+  python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --report-dir reportes
+  python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --stop-loss 0 --report-dir reportes
+}
 ```
 
 - **Descarga.** Una vela diaria por contrato para toda su ventana en un solo
@@ -132,7 +145,12 @@ python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-session
 - **Liquidez.** `LiquidityThresholds.for_daily_bars()` filtra por el volumen de
   la rueda anterior (`volume_prev_day`), sin spread ni open interest.
 - **Backtest.** La señal sale del cierre de `t` y se ejecuta, como mínimo, al
-  cierre de la rueda siguiente.
+  cierre de la rueda siguiente. Al ejecutar se recalcula el edge con esos
+  precios y la operación se descarta si quedó bajo `--min-edge`
+  (`--no-edge-check` reproduce el comportamiento anterior, que ejecutaba igual).
+- **Diagnósticos.** Cada corrida imprime el embudo de señales por detector
+  (detectadas, encoladas, ejecutadas, rechazadas por edge desaparecido, sin
+  precio o sin capacidad) y el P&L por detector y por motivo de salida.
 
 **Advertencias.** El edge depende del spread supuesto: hay que reportar la
 sensibilidad a `--assumed-spread`. Los cierres de contratos distintos no son
@@ -315,7 +333,7 @@ anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte
 pytest
 ```
 
-49 tests, sin red ni credenciales. La estrategia es generar los precios con el
+58 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
 

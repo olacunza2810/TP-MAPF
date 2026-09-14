@@ -209,3 +209,7 @@ def test_pipeline_diario_de_punta_a_punta(tmp_path) -> None:
     # La dislocación aparece al cierre de la rueda 5: nada puede abrirse antes
     # del cierre de la rueda 6.
     assert opened.min() == sessions[6]
+    # La señal de la rueda 6 se ejecutaría en la 7, cuando el precio ya volvió:
+    # se rechaza en vez de operar sin edge.
+    assert result.diagnostics["rejected_edge_gone"] > 0
+    assert (result.trades["execution_edge"] >= 5.0).all()

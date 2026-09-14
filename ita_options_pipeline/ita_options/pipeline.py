@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
+import sys
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -27,7 +30,7 @@ from .config import (
 )
 from .daily import daily_strategy_params, run_backtest_daily, run_enrich_daily
 from .demo import run_offline_demo
-from .evaluation import compute_metrics
+from .evaluation import compute_metrics, signal_funnel, trade_breakdown
 from .doctor import format_report, run_diagnostics
 from .enrich import (
     align_underlying,
@@ -43,7 +46,12 @@ from .storage import ParquetStore
 
 _LOG = logging.getLogger(__name__)
 
-__all__ = ["OptionsPipeline", "main"]
+__all__ = ["OptionsPipeline", "main", "parse_args"]
+
+_COMMANDS = (
+    "doctor", "demo", "universe", "detect", "record", "backfill", "enrich",
+    "enrich-daily", "backtest-daily",
+)
 
 
 class OptionsPipeline:
@@ -270,7 +278,75 @@ def _build_parser() -> argparse.ArgumentParser:
     btd.add_argument("--min-edge", type=float, default=5.0)
     btd.add_argument("--stop-loss", type=float, default=500.0,
                      help="Pérdida no realizada que cierra la posición; 0 lo desactiva.")
+    btd.add_argument("--no-edge-check", dest="edge_check", action="store_false",
+                     help="Ejecutar aunque el edge haya desaparecido (comportamiento previo).")
+    btd.add_argument("--report-dir", default=None,
+                     help="Carpeta donde guardar resumen, operaciones y desgloses en CSV.")
+
+    # ``--tickers`` también dentro de cada subcomando. SUPPRESS evita que el
+    # default del subcomando pise el valor pasado antes del subcomando.
+    for command in sub.choices.values():
+        command.add_argument("--tickers", nargs="+", default=argparse.SUPPRESS,
+                             help="Subyacentes (también separados por comas).")
     return parser
+
+
+def _normalize_argv(argv: Sequence[str]) -> list[str]:
+    """Evita que ``--tickers`` se coma el nombre del subcomando.
+
+    ``--tickers`` acepta varios valores, así que argparse le asigna todo lo que
+    sigue, incluido ``enrich-daily``, y después interpreta mal el resto. Acá se
+    juntan sus valores en un único ``--tickers=RTX,BA,LMT`` que termina en la
+    primera opción o subcomando. El separador ``--`` antes del subcomando, que
+    era la forma de esquivar el problema, se sigue aceptando.
+    """
+    tokens = list(argv)
+    out: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--tickers":
+            values = []
+            index += 1
+            while (index < len(tokens) and not tokens[index].startswith("-")
+                   and tokens[index] not in _COMMANDS):
+                values.append(tokens[index])
+                index += 1
+            out.append(f"--tickers={','.join(values)}" if values else token)
+            continue
+        if token == "--" and index + 1 < len(tokens) and tokens[index + 1] in _COMMANDS:
+            index += 1
+            continue
+        out.append(token)
+        index += 1
+    return out
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parsea la línea de comandos con ``--tickers`` antes o después del subcomando."""
+    raw = sys.argv[1:] if argv is None else argv
+    args = _build_parser().parse_args(_normalize_argv(raw))
+    args.tickers = [
+        ticker.strip().upper()
+        for value in args.tickers
+        for ticker in str(value).split(",")
+        if ticker.strip()
+    ]
+    return args
+
+
+def _latest_daily_manifest(data_root: Path) -> dict[str, object]:
+    """Supuestos de la última curación diaria (fuente de precio, spread supuesto)."""
+    manifests = sorted(Path(data_root).glob("manifest_daily_*.json"))
+    return json.loads(manifests[-1].read_text("utf-8")) if manifests else {}
+
+
+def _print_table(title: str, table: "pd.DataFrame") -> None:
+    print(f"\n{title}")
+    if table.empty:
+        print("  (sin filas)")
+        return
+    print(table.to_string(index=False, float_format=lambda v: f"{v:,.2f}"))
 
 
 def _run_daily(args: argparse.Namespace) -> None:
@@ -296,26 +372,72 @@ def _run_daily(args: argparse.Namespace) -> None:
                   f"(bid/ask sintético, spread supuesto {args.assumed_spread:.0%})")
         return
 
+    assumptions = _latest_daily_manifest(data_root).get("daily_assumptions", {})
+    price_source = assumptions.get("price_source", "?")
+    spread = assumptions.get("assumed_relative_spread", float("nan"))
+    stop_loss = args.stop_loss or None
+    report_dir = Path(args.report_dir) if args.report_dir else None
+    if report_dir:
+        report_dir.mkdir(parents=True, exist_ok=True)
+
     print("\nBACKTEST DIARIO — bid/ask sintético, ver advertencias en daily.py")
-    print(f"{'latencia':>10} {'operaciones':>12} {'P&L USD':>12} {'hit rate':>9} "
-          f"{'edge capt.':>11} {'Sharpe':>8}")
+    print(f"fuente {price_source} | spread supuesto {spread:.1%} | min-edge "
+          f"{args.min_edge:g} USD | stop-loss {stop_loss or 'desactivado'} | "
+          f"edge al ejecutar: {'sí' if args.edge_check else 'no'}")
+
+    summary_rows = []
     for lag in args.lag_sessions:
         result = run_backtest_daily(
             data_root, tickers,
             daily_strategy_params(
-                lag, min_net_edge=args.min_edge,
-                stop_loss_usd=args.stop_loss or None,
+                lag, min_net_edge=args.min_edge, stop_loss_usd=stop_loss,
+                require_edge_at_execution=args.edge_check,
             ),
             ExecutionCosts(min_net_edge=args.min_edge),
             args.start, args.end,
         )
         metrics = compute_metrics(result)
-        print(f"{lag:>6} rueda {metrics.n_trades:>12} {metrics.total_pnl:>12,.0f} "
-              f"{metrics.hit_rate:>9.2f} {metrics.edge_capture:>11.2f} "
-              f"{metrics.sharpe:>8.2f}")
-        if not result.trades.empty:
-            motivos = result.trades["exit_reason"].value_counts().to_dict()
-            print("         cierres: " + ", ".join(f"{k}={v}" for k, v in motivos.items()))
+        funnel = signal_funnel(result)
+        by_detector = trade_breakdown(result, "detector")
+        by_exit = trade_breakdown(result, "exit_reason")
+
+        print(f"\n=== Latencia {lag} rueda(s) ===")
+        print(f"operaciones {metrics.n_trades} | P&L {metrics.total_pnl:,.0f} USD | "
+              f"hit rate {metrics.hit_rate:.2f} | edge capturado {metrics.edge_capture:.2f} | "
+              f"Sharpe {metrics.sharpe:.2f} | max drawdown {metrics.max_drawdown:,.0f} USD")
+        _print_table("Embudo de señales", funnel)
+        _print_table("P&L por detector", by_detector)
+        _print_table("P&L por motivo de salida", by_exit)
+
+        diagnostics = result.diagnostics
+        summary_rows.append({
+            "price_source": price_source, "assumed_spread": spread,
+            "start": args.start, "end": args.end, "lag_sessions": lag,
+            "min_edge": args.min_edge, "stop_loss": stop_loss,
+            "edge_check": args.edge_check, "n_trades": metrics.n_trades,
+            "total_pnl": metrics.total_pnl, "hit_rate": metrics.hit_rate,
+            "edge_capture": metrics.edge_capture, "sharpe": metrics.sharpe,
+            "max_drawdown": metrics.max_drawdown,
+            **{k: diagnostics.get(k, 0) for k in (
+                "signals", "queued", "filled", "rejected_edge_gone",
+                "rejected_no_quote", "rejected_capacity", "pending_at_end")},
+        })
+        if report_dir:
+            tag = (f"{price_source}_spread{spread:g}_lag{lag}_sl{stop_loss or 0:g}_"
+                   f"edge{'on' if args.edge_check else 'off'}")
+            result.trades.to_csv(report_dir / f"trades_{tag}.csv", index=False)
+            funnel.to_csv(report_dir / f"funnel_{tag}.csv", index=False)
+            by_detector.to_csv(report_dir / f"by_detector_{tag}.csv", index=False)
+            by_exit.to_csv(report_dir / f"by_exit_{tag}.csv", index=False)
+
+    if report_dir:
+        # Se acumula entre corridas: una grilla sobre el spread supuesto requiere
+        # re-curar entre backtests y todas las filas terminan en el mismo resumen.
+        summary_path = report_dir / "summary.csv"
+        pd.DataFrame(summary_rows).to_csv(
+            summary_path, mode="a", header=not summary_path.exists(), index=False
+        )
+        print(f"\nReportes en {report_dir.resolve()}")
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -373,7 +495,7 @@ async def _run(args: argparse.Namespace) -> None:
 
 def main() -> None:
     """Punto de entrada de la CLI."""
-    args = _build_parser().parse_args()
+    args = parse_args()
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",

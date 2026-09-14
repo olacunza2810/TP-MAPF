@@ -198,6 +198,12 @@ class StrategyParams:
         stop_loss_usd: Pérdida no realizada que fuerza el cierre. ``None``
             desactiva el stop.
         contracts_per_trade: Tamaño de la posición.
+        require_edge_at_execution: Si ``True``, al ejecutar se recalcula el
+            edge con los precios de ese instante y la operación se descarta si
+            quedó por debajo del umbral. Con ``False`` se reproduce el
+            comportamiento anterior: se ejecuta aunque el edge haya desaparecido.
+        min_edge_at_execution: Umbral en USD por contrato para ese control.
+            ``None`` usa ``min_net_edge``.
     """
 
     min_net_edge: float = 5.0
@@ -211,6 +217,8 @@ class StrategyParams:
     execution_lag: timedelta = timedelta(minutes=5)
     stop_loss_usd: float | None = 500.0
     contracts_per_trade: float = 1.0
+    require_edge_at_execution: bool = True
+    min_edge_at_execution: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serializa los hiperparámetros para el registro de la corrida."""
@@ -226,6 +234,8 @@ class StrategyParams:
             "execution_lag_s": self.execution_lag.total_seconds(),
             "stop_loss_usd": self.stop_loss_usd,
             "contracts_per_trade": self.contracts_per_trade,
+            "require_edge_at_execution": self.require_edge_at_execution,
+            "min_edge_at_execution": self.min_edge_at_execution,
         }
 
 
@@ -246,6 +256,9 @@ class Position:
         closed_at: Instante de cierre, si ya cerró.
         exit_cash: Flujo de caja neto al cerrar.
         exit_reason: ``expiry``, ``stop_loss``, ``converged`` o ``end_of_data``.
+        signal_at: Instante en que el detector generó la señal.
+        execution_edge: Edge en USD recalculado con los precios de ejecución,
+            neto de la misma comisión que usó el detector.
     """
 
     position_id: int
@@ -261,6 +274,8 @@ class Position:
     exit_cash: float = 0.0
     exit_commission: float = 0.0
     exit_reason: str = ""
+    signal_at: pd.Timestamp | None = None
+    execution_edge: float = float("nan")
 
     @property
     def is_open(self) -> bool:
@@ -405,37 +420,73 @@ class ArbitrageBacktester:
         view: PointInTimeView,
         params: StrategyParams,
         position_id: int,
-    ) -> Position | None:
-        """Abre una posición ejecutando contra los quotes del instante de fill.
+        signal_at: pd.Timestamp | None = None,
+    ) -> tuple[Position | None, str]:
+        r"""Abre una posición ejecutando contra los quotes del instante de fill.
 
         La señal se genera en :math:`t` y se ejecuta en el primer instante
-        disponible a partir de :math:`t + \\text{lag}`, re-cotizando cada pata.
+        disponible a partir de :math:`t + \text{lag}`, re-cotizando cada pata.
         Si alguna pata dejó de cotizar en el ínterin, la operación se descarta
         entera: no se ejecutan estrategias parciales, porque una mariposa a la
         que le falta un ala no tiene payoff acotado.
+
+        **Control del edge.** Con los precios de ejecución se recalcula el edge
+        con la misma fórmula del detector. El crédito de cada detector tiene una
+        parte de caja (lo que se cobra al armar las patas) y, en algunos, una
+        parte estructural que no cambia con los precios: el ancho del spread
+        vertical, el strike descontado de la paridad o el valor del modelo. Esa
+        parte se obtiene de la señal,
+
+        .. math::
+
+            \text{estructural} = \text{crédito bruto} - \text{caja}_{\text{señal}},
+
+        y el edge al ejecutar es
+        :math:`\text{caja}_{\text{ejecución}} + \text{estructural} - \text{comisión}`,
+        con la misma comisión que usó el detector. Si los precios no se movieron,
+        coincide exactamente con el edge anunciado.
+
+        Returns:
+            ``(posición, "filled")``, o ``(None, motivo)`` con motivo
+            ``no_quote`` o ``edge_gone``.
         """
         legs = tuple(signal["leg_spec"])
         if not legs:
-            return None
+            return None, "no_quote"
 
         cash = 0.0
+        signal_cash = 0.0
         refreshed: list[dict[str, Any]] = []
         for leg in legs:
             if leg["kind"] == "stock":
                 spot = view.spot(str(leg["symbol"]))
                 if not np.isfinite(spot):
-                    return None
+                    return None, "no_quote"
                 fill = spot
             else:
                 quote = view.last_quote(str(leg["symbol"]))
                 if quote is None:
-                    return None
+                    return None, "no_quote"
                 side = "ask" if leg["qty"] > 0 else "bid"
                 fill = float(quote[side])
                 if not np.isfinite(fill) or fill <= 0:
-                    return None
+                    return None, "no_quote"
             cash -= leg["qty"] * fill * self._costs.multiplier
+            signal_cash -= leg["qty"] * float(leg["price"]) * self._costs.multiplier
             refreshed.append({**leg, "price": fill})
+
+        structural = float(signal["gross_credit"]) * self._costs.multiplier - signal_cash
+        execution_edge = (
+            cash + structural - float(signal["commission"])
+        ) * params.contracts_per_trade
+        if params.require_edge_at_execution:
+            threshold = (
+                params.min_edge_at_execution
+                if params.min_edge_at_execution is not None
+                else params.min_net_edge
+            ) * params.contracts_per_trade
+            if not execution_edge >= threshold:
+                return None, "edge_gone"
 
         n_legs = len(refreshed) * params.contracts_per_trade
         commission = self._costs.commission_per_contract * n_legs
@@ -454,7 +505,9 @@ class ArbitrageBacktester:
             entry_commission=commission,
             predicted_edge=float(signal["net_edge_usd"]) * params.contracts_per_trade,
             expiration=max(expirations) if expirations else pd.NaT,
-        )
+            signal_at=signal_at,
+            execution_edge=execution_edge,
+        ), "filled"
 
     def _close(
         self,
@@ -504,9 +557,23 @@ class ArbitrageBacktester:
         open_positions: list[Position] = []
         closed: list[Position] = []
         equity_rows: list[dict[str, Any]] = []
-        pending: list[tuple[pd.Timestamp, pd.Series]] = []
-        counters = {"signals": 0, "filled": 0, "rejected_no_quote": 0}
+        # (instante de ejecución, instante de la señal, señal)
+        pending: list[tuple[pd.Timestamp, pd.Timestamp, pd.Series]] = []
+        counters: dict[str, int] = {
+            "signals": 0, "queued": 0, "filled": 0, "rejected_no_quote": 0,
+            "rejected_edge_gone": 0, "rejected_capacity": 0, "pending_at_end": 0,
+        }
+        by_detector: dict[str, dict[str, int]] = {}
         next_id = 0
+
+        def bump(detector: str, key: str, amount: int = 1) -> None:
+            """Suma al contador total y al del detector."""
+            if key != "detected":
+                counters[key] += amount
+            row = by_detector.setdefault(
+                detector, {k: 0 for k in ("detected", *counters) if k != "signals"}
+            )
+            row[key] += amount
 
         signal_costs = ExecutionCosts(
             commission_per_contract=self._costs.commission_per_contract,
@@ -540,17 +607,21 @@ class ArbitrageBacktester:
             open_positions = still_open
 
             # 2. Ejecutar señales cuyo retardo ya venció.
-            ready = [(t, s) for t, s in pending if stamp >= t]
-            pending = [(t, s) for t, s in pending if stamp < t]
-            for _, signal in ready:
+            ready = [item for item in pending if stamp >= item[0]]
+            pending = [item for item in pending if stamp < item[0]]
+            for index, (_, signal_at, signal) in enumerate(ready):
                 if len(open_positions) >= params.max_concurrent_positions:
+                    for _, _, skipped in ready[index:]:
+                        bump(str(skipped["detector"]), "rejected_capacity")
                     break
-                position = self._execute(signal, view, params, next_id)
+                position, outcome = self._execute(
+                    signal, view, params, next_id, signal_at
+                )
                 if position is None:
-                    counters["rejected_no_quote"] += 1
+                    bump(str(signal["detector"]), f"rejected_{outcome}")
                     continue
                 open_positions.append(position)
-                counters["filled"] += 1
+                bump(position.detector, "filled")
                 next_id += 1
 
             # 3. Generar señales nuevas sobre la cadena visible.
@@ -564,10 +635,13 @@ class ArbitrageBacktester:
                             signals["detector"].isin(params.detectors)
                         ]
                     counters["signals"] += len(signals)
+                    for detector, count in signals["detector"].value_counts().items():
+                        bump(str(detector), "detected", int(count))
                     for _, signal in signals.head(
                         params.max_positions_per_signal
                     ).iterrows():
-                        pending.append((stamp + params.execution_lag, signal))
+                        pending.append((stamp + params.execution_lag, stamp, signal))
+                        bump(str(signal["detector"]), "queued")
 
             # 4. Registrar equity.
             unrealized_total = 0.0
@@ -591,11 +665,15 @@ class ArbitrageBacktester:
             self._close(position, view, "end_of_data", params)
             closed.append(position)
 
+        # Señales encoladas cuyo retardo cae después del último dato.
+        for _, _, signal in pending:
+            bump(str(signal["detector"]), "pending_at_end")
+
         return BacktestResult(
             trades=self._trades_frame(closed),
             equity=pd.DataFrame(equity_rows),
             params=params.as_dict(),
-            diagnostics=counters,
+            diagnostics={**counters, "by_detector": by_detector},
         )
 
     @staticmethod
@@ -630,9 +708,10 @@ class ArbitrageBacktester:
         if not positions:
             return pd.DataFrame(
                 columns=[
-                    "position_id", "detector", "underlying", "opened_at",
-                    "closed_at", "entry_cash", "exit_cash", "commission",
-                    "pnl", "predicted_edge", "edge_capture", "exit_reason",
+                    "position_id", "detector", "underlying", "signal_at",
+                    "opened_at", "closed_at", "entry_cash", "exit_cash",
+                    "commission", "pnl", "predicted_edge", "execution_edge",
+                    "edge_capture", "exit_reason",
                 ]
             )
         rows = [
@@ -640,6 +719,7 @@ class ArbitrageBacktester:
                 "position_id": p.position_id,
                 "detector": p.detector,
                 "underlying": p.underlying,
+                "signal_at": p.signal_at,
                 "opened_at": p.opened_at,
                 "closed_at": p.closed_at,
                 "entry_cash": p.entry_cash,
@@ -647,6 +727,7 @@ class ArbitrageBacktester:
                 "commission": p.entry_commission + p.exit_commission,
                 "pnl": p.realized_pnl,
                 "predicted_edge": p.predicted_edge,
+                "execution_edge": p.execution_edge,
                 "edge_capture": (
                     p.realized_pnl / p.predicted_edge if p.predicted_edge else np.nan
                 ),

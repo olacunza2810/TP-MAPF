@@ -39,6 +39,8 @@ __all__ = [
     "split_in_sample",
     "GridSearchResult",
     "grid_search",
+    "trade_breakdown",
+    "signal_funnel",
 ]
 
 _EULER_MASCHERONI = 0.5772156649015329
@@ -124,6 +126,80 @@ def compute_metrics(
         kurtosis=kurt,
         n_periods=len(changes),
     )
+
+
+_BREAKDOWN_COLUMNS = (
+    "operaciones", "pnl_total", "pnl_medio", "hit_rate",
+    "edge_anunciado", "edge_al_ejecutar", "edge_capture",
+)
+
+_FUNNEL_LABELS = {
+    "detected": "detectadas",
+    "queued": "encoladas",
+    "filled": "ejecutadas",
+    "rejected_edge_gone": "edge_desaparecido",
+    "rejected_no_quote": "sin_precio",
+    "rejected_capacity": "sin_capacidad",
+    "pending_at_end": "pendientes_al_final",
+}
+
+
+def trade_breakdown(result: BacktestResult, by: str | Sequence[str]) -> pd.DataFrame:
+    """Agrega las operaciones cerradas por detector, motivo de salida u otra columna.
+
+    Es la tabla que explica de dónde sale el P&L: un total negativo puede venir
+    de un solo detector, o de las salidas por stop-loss y no del vencimiento.
+
+    Args:
+        result: Resultado del backtest.
+        by: Columna o columnas de ``result.trades`` por las que agrupar.
+
+    Returns:
+        Una fila por grupo, ordenada del peor al mejor P&L total.
+    """
+    columns = [by] if isinstance(by, str) else list(by)
+    if result.trades.empty:
+        return pd.DataFrame(columns=[*columns, *_BREAKDOWN_COLUMNS])
+    trades = result.trades
+    if "execution_edge" not in trades.columns:
+        trades = trades.assign(execution_edge=np.nan)
+    table = (
+        trades.groupby(columns, dropna=False)
+        .agg(
+            operaciones=("pnl", "size"),
+            pnl_total=("pnl", "sum"),
+            pnl_medio=("pnl", "mean"),
+            hit_rate=("pnl", lambda s: float((s > 0).mean())),
+            edge_anunciado=("predicted_edge", "sum"),
+            edge_al_ejecutar=("execution_edge", "sum"),
+        )
+        .reset_index()
+    )
+    announced = table["edge_anunciado"].where(table["edge_anunciado"] != 0)
+    table["edge_capture"] = table["pnl_total"] / announced
+    return table.sort_values("pnl_total", ignore_index=True)
+
+
+def signal_funnel(result: BacktestResult) -> pd.DataFrame:
+    """Embudo de señales por detector, con una fila de total.
+
+    ``detectadas`` cuenta todas las oportunidades que superaron el umbral;
+    ``encoladas``, las que entraron por el tope ``max_positions_per_signal``.
+    Cada encolada termina en exactamente una de: ejecutada, edge desaparecido,
+    sin precio, sin capacidad o pendiente al final de los datos.
+    """
+    by_detector = result.diagnostics.get("by_detector", {})
+    labels = list(_FUNNEL_LABELS.values())
+    if not by_detector:
+        return pd.DataFrame(columns=["detector", *labels])
+    rows = [
+        {"detector": detector,
+         **{label: int(counts.get(key, 0)) for key, label in _FUNNEL_LABELS.items()}}
+        for detector, counts in sorted(by_detector.items())
+    ]
+    table = pd.DataFrame(rows)
+    total = {"detector": "TOTAL", **table[labels].sum().astype(int).to_dict()}
+    return pd.concat([table, pd.DataFrame([total])], ignore_index=True)
 
 
 def probabilistic_sharpe_ratio(
