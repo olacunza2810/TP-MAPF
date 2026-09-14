@@ -123,9 +123,20 @@ def align_underlying(
             "timestamp": "underlying_bar_ts",
         }
     ).sort_values("available_at")
+    # El parquet devuelve ``underlying`` como StringDtype y el SDK entrega
+    # ``symbol`` como str: pandas 3 rechaza cruzar claves de tipos distintos.
+    # Lo mismo con la resolución temporal: parquet puede volver en ns o en us.
+    bars["underlying"] = bars["underlying"].astype("string")
+    bars["available_at"] = bars["available_at"].dt.as_unit("ns")
 
-    left = options.copy()
-    left["timestamp"] = pd.to_datetime(left["timestamp"], utc=True)
+    # Un frame leído del data lake ya trae estas columnas vacías, porque
+    # ``enforce_schema`` completa el esquema: si no se quitan, el merge las
+    # duplica.
+    derived = ("underlying_price", "underlying_bar_ts", "underlying_available_at",
+               "alignment_lag_s")
+    left = options.drop(columns=[c for c in derived if c in options.columns])
+    left["underlying"] = left["underlying"].astype("string")
+    left["timestamp"] = pd.to_datetime(left["timestamp"], utc=True).dt.as_unit("ns")
     left = left.sort_values("timestamp")
 
     merged = pd.merge_asof(
