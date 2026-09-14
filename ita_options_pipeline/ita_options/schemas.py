@@ -36,8 +36,15 @@ OPTION_QUOTE_SCHEMA: Final[dict[str, str]] = {
     "spread_is_proxy": "bool",
     "last_trade_price": "float64",
     "last_trade_at": "datetime64[ns, UTC]",
+    # Vela diaria (modo daily: el bid/ask se sintetiza a partir de estos campos)
+    "open": "float64",
+    "high": "float64",
+    "low": "float64",
+    "close": "float64",
+    "vwap": "float64",
     # Actividad
     "volume": "float64",
+    "volume_prev_day": "float64",
     "open_interest": "float64",
     "open_interest_date": "datetime64[ns]",
     # Subyacente alineado

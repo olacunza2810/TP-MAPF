@@ -16,11 +16,13 @@ __all__ = [
     "AlpacaCredentials",
     "LiquidityThresholds",
     "PricingAssumptions",
+    "DailyBarAssumptions",
     "IngestionSettings",
     "PipelineConfig",
 ]
 
 OptionsFeedName = Literal["opra", "indicative"]
+DataMode = Literal["nbbo", "daily"]
 
 #: Universo del trabajo práctico. Subyacentes individuales pertenecientes al ITA.
 #: El ETF NO es subyacente válido según la consigna. Se eligen tres regímenes de
@@ -79,6 +81,12 @@ class LiquidityThresholds:
         max_dte: Horizonte máximo. Vencimientos muy largos tienen quotes
             indicativos poco confiables.
         min_dte: Horizonte mínimo. Bajo 7 días el gamma y el pin risk dominan.
+        data_mode: ``nbbo`` para cotizaciones con bid/ask real (recorder de
+            Alpaca). ``daily`` para velas diarias (Polygon gratuito), donde no
+            hay spread observado ni open interest histórico: la liquidez se
+            juzga por el volumen de la rueda anterior.
+        min_prev_day_volume: Sólo en modo ``daily``. Volumen de la rueda
+            anterior estrictamente mayor a este valor.
     """
 
     min_volume: int = 0
@@ -88,6 +96,14 @@ class LiquidityThresholds:
     min_mid_price: float = 0.05
     max_dte: int = 180
     min_dte: int = 7
+    data_mode: DataMode = "nbbo"
+    min_prev_day_volume: float = 0.0
+
+    @classmethod
+    def for_daily_bars(cls, **overrides: object) -> "LiquidityThresholds":
+        """Umbrales para velas diarias: sin open interest ni spread."""
+        base: dict[str, object] = {"data_mode": "daily", "min_open_interest": 0}
+        return cls(**{**base, **overrides})  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +129,27 @@ class PricingAssumptions:
     risk_free_curve_path: Path | None = None
     binomial_steps: int = 256
     day_count: Literal[365, 360, 252] = 365
+
+
+@dataclass(frozen=True, slots=True)
+class DailyBarAssumptions:
+    """Supuestos para operar con velas diarias en lugar de NBBO.
+
+    Una vela diaria no trae bid ni ask. Para que los detectores y el backtest
+    sigan cruzando el spread, se construyen lados sintéticos alrededor de un
+    precio de referencia. Todo resultado obtenido así depende de
+    ``assumed_relative_spread`` y debe reportarse con su sensibilidad.
+
+    Attributes:
+        price_source: ``close`` (último trade de la rueda) o ``vwap`` (precio
+            medio ponderado por volumen). Si falta el VWAP se usa el cierre.
+        assumed_relative_spread: Spread relativo supuesto, ``(ask - bid) / mid``.
+        min_half_spread: Medio spread mínimo en USD: un tick de 0.01.
+    """
+
+    price_source: Literal["close", "vwap"] = "close"
+    assumed_relative_spread: float = 0.05
+    min_half_spread: float = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +197,7 @@ class PipelineConfig:
     data_root: Path = Path("data")
     liquidity: LiquidityThresholds = field(default_factory=LiquidityThresholds)
     pricing: PricingAssumptions = field(default_factory=PricingAssumptions)
+    daily: DailyBarAssumptions = field(default_factory=DailyBarAssumptions)
     ingestion: IngestionSettings = field(default_factory=IngestionSettings)
 
     def manifest(self) -> dict[str, object]:

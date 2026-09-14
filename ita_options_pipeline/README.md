@@ -21,7 +21,7 @@ ita_options/
 ├── demo.py         Mercado sintético + corrida offline del pipeline completo
 ├── doctor.py       Diagnóstico de conectividad y datos disponibles
 └── pipeline.py     Orquestador + CLI
-tests/                         41 tests, incluidos tests de contrato contra el SDK real
+tests/                         48 tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
 informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
@@ -58,7 +58,7 @@ ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 41 tests, sin red ni credenciales
+pytest                              # 48 tests, sin red ni credenciales
 python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
 
@@ -107,24 +107,38 @@ vivo. `opra` requiere Algo Trader Plus. La elección debe declararse en la
 presentación: un arbitraje detectado sobre un feed demorado 15 minutos no es
 explotable, y los profesores lo van a preguntar.
 
-### Datos históricos desde Polygon (Massive)
+### Modo diario con Polygon (Massive) gratuito
 
-Polygon sí tiene NBBO histórico de opciones. `scripts/download_polygon.py` arma
-el mismo data lake que el pipeline (`option_quotes/`, `contract_master/`,
-barras de la acción) hacia atrás en el tiempo, más dividendos y la curva del
-Tesoro en `risk_free_curve.csv`:
+El plan gratuito de Polygon no incluye quotes de opciones y admite 5 requests
+por minuto, pero sí velas diarias (OHLCV + VWAP) por contrato. El modo diario
+corre todo el pipeline sobre ese insumo:
 
 ```powershell
 $env:POLYGON_API_KEY="..."
-python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31 --dry-run   # estima requests
+python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31 --dry-run   # plan y horas, sin red
 python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31
+python -m ita_options.pipeline --tickers RTX BA LMT enrich-daily --price-source close --assumed-spread 0.05
+python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2
 ```
 
-El NBBO tick a tick se remuestrea a marcas cada 5 minutos (último quote con
-`sip_timestamp <= marca`), el universo de cada día se pide con `as_of` para no
-perder contratos vencidos, y `volume` es el de la rueda anterior. Es reanudable.
-**Polygon no publica open interest histórico**: esas columnas quedan vacías y
-hay que usar `min_open_interest=0` al filtrar.
+- **Descarga.** Una vela diaria por contrato para toda su ventana en un solo
+  request; universo acotado a los `--nearest-monthlies` vencimientos mensuales
+  más próximos y a `--max-strikes-per-side` strikes por lado dentro de
+  ±`--band` del spot de la rueda previa. 12 s entre requests y backoff ante 429.
+  Reanudable: lo descargado queda en caché.
+- **Curación** (`ita_options/daily.py`). Cada fila se sella al cierre de su
+  rueda (16:00 ET). Bid y ask se **sintetizan** alrededor del close o del VWAP
+  con un spread supuesto y quedan con `spread_is_proxy=True`.
+- **Liquidez.** `LiquidityThresholds.for_daily_bars()` filtra por el volumen de
+  la rueda anterior (`volume_prev_day`), sin spread ni open interest.
+- **Backtest.** La señal sale del cierre de `t` y se ejecuta, como mínimo, al
+  cierre de la rueda siguiente.
+
+**Advertencias.** El edge depende del spread supuesto: hay que reportar la
+sensibilidad a `--assumed-spread`. Los cierres de contratos distintos no son
+sincrónicos (último trade a horas distintas), lo que genera violaciones de no
+arbitraje aparentes en strikes poco operados. Polygon no publica open interest
+histórico.
 
 ---
 
@@ -301,7 +315,7 @@ anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte
 pytest
 ```
 
-41 tests, sin red ni credenciales. La estrategia es generar los precios con el
+48 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
 

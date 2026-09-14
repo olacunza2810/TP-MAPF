@@ -4,6 +4,18 @@ Los filtros no borran filas en silencio: marcan cada causa de exclusión en una
 columna booleana y devuelven un reporte con el conteo por causa. Poder mostrar
 esa tabla en la presentación es la diferencia entre "aplicamos filtros de
 liquidez" y una justificación auditable.
+
+Hay dos juegos de criterios, según el insumo (``LiquidityThresholds.data_mode``):
+
+``nbbo``
+    Cotizaciones con bid y ask reales (recorder de Alpaca). Se evalúan volumen,
+    open interest, bid, spread y quotes cruzados.
+
+``daily``
+    Velas diarias (Polygon gratuito). No hay bid/ask observado ni open interest
+    histórico, así que la liquidez se juzga por el **volumen de la rueda
+    anterior** y el precio de referencia. El spread sintético no se filtra: es
+    un supuesto, no una medición, y filtrar por él sería filtrar por el supuesto.
 """
 
 from __future__ import annotations
@@ -58,40 +70,10 @@ class FilterReport:
         )
 
 
-def apply_liquidity_filters(
-    frame: pd.DataFrame,
-    thresholds: LiquidityThresholds,
-    drop: bool = False,
-) -> tuple[pd.DataFrame, FilterReport]:
-    """Marca y opcionalmente descarta contratos no explotables.
-
-    Criterios, en el orden en que aparecen en la consigna más los que la
-    práctica exige:
-
-    - ``volume > min_volume``: sin volumen negociado no hay evidencia de que el
-      contrato se pueda operar.
-    - ``open_interest > min_open_interest``: usando el OI rezagado, ver
-      :func:`enrich.attach_lagged_open_interest`.
-    - ``bid > min_bid``: un bid de cero deja la pata vendedora sin contraparte.
-      Es la exclusión más importante: los contratos con bid cero son los que más
-      "arbitrajes" falsos generan, porque el mid colapsa a la mitad del ask.
-    - ``spread_rel < max_relative_spread``: el spread es el costo de cruzar. Una
-      señal de 5% de desvío sobre un contrato con 30% de spread no es
-      explotable.
-    - ``spread_abs > 0``: descarta quotes cruzados o bloqueados.
-    - ``min_mid_price``, ``min_dte``, ``max_dte``: higiene del universo.
-    - ``underlying_price`` no nulo: sin spot alineado no hay valuación posible.
-
-    Args:
-        frame: DataFrame enriquecido.
-        thresholds: Umbrales configurados.
-        drop: Si ``True`` devuelve sólo las filas que pasan; si ``False``
-            devuelve todo el frame con la columna ``is_tradable``.
-
-    Returns:
-        Tupla ``(frame, reporte)``.
-    """
-    out = frame.copy()
+def _nbbo_checks(
+    out: pd.DataFrame, thresholds: LiquidityThresholds
+) -> tuple[dict[str, pd.Series], set[str]]:
+    """Criterios sobre cotizaciones con bid y ask reales."""
     checks: dict[str, pd.Series] = {
         # Sólo se excluye cuando el volumen se conoce y es bajo. Tratar el
         # volumen desconocido como cero descartaría toda la cadena grabada por
@@ -117,10 +99,85 @@ def apply_liquidity_filters(
         ),
         "spot_no_alineado": out["underlying_price"].isna(),
     }
-
     # ``volumen_desconocido`` se reporta pero no excluye: es un diagnóstico de
     # cobertura del dato, no un criterio de explotabilidad.
-    informational = {"volumen_desconocido"}
+    return checks, {"volumen_desconocido"}
+
+
+def _daily_checks(
+    out: pd.DataFrame, thresholds: LiquidityThresholds
+) -> tuple[dict[str, pd.Series], set[str]]:
+    """Criterios sobre velas diarias: volumen de la rueda anterior y precio.
+
+    Se usa el volumen de ``t-1`` y no el de ``t`` para que el filtro sea
+    conocible antes de operar en la rueda ``t``, igual que el open interest
+    rezagado del modo ``nbbo``.
+    """
+    if "volume_prev_day" not in out.columns:
+        raise KeyError(
+            "El modo 'daily' necesita la columna 'volume_prev_day' (volumen de la "
+            "rueda anterior). Ver daily.previous_session_volume."
+        )
+    prev = pd.to_numeric(out["volume_prev_day"], errors="coerce")
+    mid = pd.to_numeric(out["mid_price"], errors="coerce")
+    checks: dict[str, pd.Series] = {
+        "volumen_rueda_anterior_insuficiente": prev.notna()
+        & (prev <= thresholds.min_prev_day_volume),
+        # A diferencia del modo nbbo, el volumen desconocido excluye: en datos
+        # diarios sólo falta en la primera rueda de cada serie, y ahí no hay
+        # ninguna otra evidencia de liquidez.
+        "volumen_rueda_anterior_desconocido": prev.isna(),
+        "precio_invalido": mid.isna() | (mid <= 0.0),
+        "mid_por_debajo_del_minimo": mid.fillna(0) < thresholds.min_mid_price,
+        "dte_fuera_de_rango": (
+            (out["dte"] < thresholds.min_dte) | (out["dte"] > thresholds.max_dte)
+        ),
+        "spot_no_alineado": out["underlying_price"].isna(),
+    }
+    return checks, set()
+
+
+def apply_liquidity_filters(
+    frame: pd.DataFrame,
+    thresholds: LiquidityThresholds,
+    drop: bool = False,
+) -> tuple[pd.DataFrame, FilterReport]:
+    """Marca y opcionalmente descarta contratos no explotables.
+
+    Criterios del modo ``nbbo``, en el orden en que aparecen en la consigna más
+    los que la práctica exige:
+
+    - ``volume > min_volume``: sin volumen negociado no hay evidencia de que el
+      contrato se pueda operar.
+    - ``open_interest > min_open_interest``: usando el OI rezagado, ver
+      :func:`enrich.attach_lagged_open_interest`.
+    - ``bid > min_bid``: un bid de cero deja la pata vendedora sin contraparte.
+      Es la exclusión más importante: los contratos con bid cero son los que más
+      "arbitrajes" falsos generan, porque el mid colapsa a la mitad del ask.
+    - ``spread_rel < max_relative_spread``: el spread es el costo de cruzar. Una
+      señal de 5% de desvío sobre un contrato con 30% de spread no es
+      explotable.
+    - ``spread_abs > 0``: descarta quotes cruzados o bloqueados.
+    - ``min_mid_price``, ``min_dte``, ``max_dte``: higiene del universo.
+    - ``underlying_price`` no nulo: sin spot alineado no hay valuación posible.
+
+    En modo ``daily`` se reemplazan volumen, open interest, bid y spread por el
+    volumen de la rueda anterior (``volume_prev_day > min_prev_day_volume``) y
+    un precio de referencia válido.
+
+    Args:
+        frame: DataFrame enriquecido.
+        thresholds: Umbrales configurados.
+        drop: Si ``True`` devuelve sólo las filas que pasan; si ``False``
+            devuelve todo el frame con la columna ``is_tradable``.
+
+    Returns:
+        Tupla ``(frame, reporte)``.
+    """
+    out = frame.copy()
+    build = _daily_checks if thresholds.data_mode == "daily" else _nbbo_checks
+    checks, informational = build(out, thresholds)
+
     excluded = pd.Series(False, index=out.index)
     for name, mask in checks.items():
         out[f"excl_{name}"] = mask.fillna(True)
@@ -134,7 +191,8 @@ def apply_liquidity_filters(
         exclusions={name: int(mask.fillna(True).sum()) for name, mask in checks.items()},
     )
     _LOG.info(
-        "Filtros de liquidez: %d/%d filas explotables (%.1f%%).",
+        "Filtros de liquidez (%s): %d/%d filas explotables (%.1f%%).",
+        thresholds.data_mode,
         report.surviving_rows,
         report.total_rows,
         report.survival_rate * 100.0,

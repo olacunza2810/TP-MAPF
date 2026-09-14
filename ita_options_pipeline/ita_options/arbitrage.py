@@ -165,16 +165,17 @@ def _leg_stats(rows: Sequence[pd.Series]) -> dict[str, object]:
     que se reporta el mínimo de volumen y open interest y el máximo de spread
     relativo, no el promedio.
     """
+    def _extreme(column: str, reducer) -> float:
+        # Con velas diarias el open interest nunca existe: devolver NaN sin la
+        # advertencia de numpy por cada oportunidad.
+        values = np.array([r.get(column, np.nan) for r in rows], dtype=float)
+        values = values[np.isfinite(values)]
+        return float(reducer(values)) if values.size else float("nan")
+
     return {
-        "min_volume": float(
-            np.nanmin([r.get("volume", np.nan) for r in rows]) if rows else np.nan
-        ),
-        "min_open_interest": float(
-            np.nanmin([r.get("open_interest", np.nan) for r in rows]) if rows else np.nan
-        ),
-        "max_spread_rel": float(
-            np.nanmax([r.get("spread_rel", np.nan) for r in rows]) if rows else np.nan
-        ),
+        "min_volume": _extreme("volume", np.min),
+        "min_open_interest": _extreme("open_interest", np.min),
+        "max_spread_rel": _extreme("spread_rel", np.max),
         "symbols": "|".join(str(r.get("symbol", "")) for r in rows),
     }
 

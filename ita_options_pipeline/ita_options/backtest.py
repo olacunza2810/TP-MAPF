@@ -30,6 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Iterator, Sequence
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,20 @@ import pandas as pd
 from .arbitrage import ExecutionCosts, run_all_detectors
 
 _LOG = logging.getLogger(__name__)
+_NY = ZoneInfo("America/New_York")
+
+
+def _expiry_instant(expiration: Any) -> pd.Timestamp:
+    """Instante de vencimiento: 16:00 de Nueva York del día de expiración, en UTC.
+
+    Tomar la medianoche UTC como vencimiento cerraba la posición con el spot de
+    la rueda anterior. Con velas diarias las posiciones sí llegan a vencer, así
+    que la diferencia se vuelve visible.
+    """
+    stamp = pd.Timestamp(expiration)
+    if stamp.tz is not None:
+        stamp = stamp.tz_convert(_NY).tz_localize(None)
+    return (stamp.normalize() + pd.Timedelta(hours=16)).tz_localize(_NY).tz_convert("UTC")
 
 __all__ = [
     "PointInTimeView",
@@ -150,9 +165,7 @@ class PointInTimeView:
         Raises:
             LookaheadError: si el vencimiento todavía no ocurrió.
         """
-        expiry = pd.Timestamp(expiration)
-        if expiry.tz is None:
-            expiry = expiry.tz_localize("UTC")
+        expiry = _expiry_instant(expiration)
         if expiry > self.now:
             raise LookaheadError(
                 f"Liquidación anticipada: vencimiento {expiry} > reloj {self.now}."
@@ -509,10 +522,7 @@ class ArbitrageBacktester:
             still_open: list[Position] = []
             for position in open_positions:
                 if pd.notna(position.expiration):
-                    expiry = pd.Timestamp(position.expiration)
-                    if expiry.tz is None:
-                        expiry = expiry.tz_localize("UTC")
-                    if stamp >= expiry:
+                    if stamp >= _expiry_instant(position.expiration):
                         self._close(position, view, "expiry", params)
                         closed.append(position)
                         continue
@@ -600,8 +610,16 @@ class ArbitrageBacktester:
             out = out.loc[
                 out["open_interest"].fillna(0.0) >= params.min_open_interest
             ]
-        if "volume" in out.columns:
-            out = out.loc[out["volume"].fillna(0.0) >= params.min_volume]
+        # Con velas diarias el volumen conocible antes de operar es el de la
+        # rueda anterior. En datos NBBO la columna existe por el esquema pero
+        # viene vacía, y ahí se sigue usando ``volume``.
+        volume_column = (
+            "volume_prev_day"
+            if "volume_prev_day" in out.columns and out["volume_prev_day"].notna().any()
+            else "volume"
+        )
+        if volume_column in out.columns:
+            out = out.loc[out[volume_column].fillna(0.0) >= params.min_volume]
         if "dte" in out.columns:
             out = out.loc[out["dte"] <= params.max_dte]
         return out

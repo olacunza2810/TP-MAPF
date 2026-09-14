@@ -12,18 +12,72 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
-from .config import PricingAssumptions
+from .config import DailyBarAssumptions, PricingAssumptions
 from .volatility import bsm_vega, implied_volatility_vectorized
 
 _LOG = logging.getLogger(__name__)
 
 __all__ = [
+    "quotes_from_daily_bars",
     "compute_mid_and_spread",
     "align_underlying",
     "compute_time_to_expiry",
     "attach_lagged_open_interest",
     "compute_implied_volatility",
 ]
+
+
+def quotes_from_daily_bars(
+    frame: pd.DataFrame, assumptions: DailyBarAssumptions
+) -> pd.DataFrame:
+    r"""Construye bid y ask sintéticos a partir de una vela diaria.
+
+    Con :math:`p` el precio de referencia (``close`` o ``vwap``) y :math:`s` el
+    spread relativo supuesto:
+
+    .. math::
+
+        h = \max\!\left(\frac{p\,s}{2},\; h_{\min}\right), \qquad
+        b = \max(p - h,\, 0), \qquad a = p + h
+
+    El VWAP resume toda la rueda y es menos sensible a un último trade aislado;
+    el cierre es el precio vigente en el instante en que se sella la fila. Si
+    se pide VWAP y falta, se usa el cierre.
+
+    Los lados resultantes **no son observaciones**: quedan marcados con
+    ``spread_is_proxy=True`` y todo edge calculado sobre ellos depende de
+    ``assumed_relative_spread``.
+
+    Args:
+        frame: Velas con ``close`` y opcionalmente ``vwap``.
+        assumptions: Fuente de precio y spread supuesto.
+
+    Returns:
+        Copia con ``bid``, ``ask``, ``last_trade_price`` y ``spread_is_proxy``.
+
+    Raises:
+        KeyError: si falta ``close``.
+        ValueError: si la fuente de precio es desconocida.
+    """
+    if assumptions.price_source not in ("close", "vwap"):
+        raise ValueError(f"Fuente de precio desconocida: {assumptions.price_source}")
+    if "close" not in frame.columns:
+        raise KeyError("Las velas diarias necesitan la columna 'close'.")
+
+    out = frame.copy()
+    close = pd.to_numeric(out["close"], errors="coerce")
+    price = close
+    if assumptions.price_source == "vwap" and "vwap" in out.columns:
+        price = pd.to_numeric(out["vwap"], errors="coerce").fillna(close)
+
+    half = np.maximum(
+        price * assumptions.assumed_relative_spread / 2.0, assumptions.min_half_spread
+    )
+    out["bid"] = (price - half).clip(lower=0.0)
+    out["ask"] = price + half
+    out["last_trade_price"] = close
+    out["spread_is_proxy"] = True
+    return out
 
 
 def compute_mid_and_spread(frame: pd.DataFrame) -> pd.DataFrame:

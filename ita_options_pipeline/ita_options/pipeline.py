@@ -19,8 +19,15 @@ from pathlib import Path
 import pandas as pd
 
 from .clients import AsyncAlpacaGateway
-from .config import AlpacaCredentials, PipelineConfig
+from .config import (
+    AlpacaCredentials,
+    DailyBarAssumptions,
+    LiquidityThresholds,
+    PipelineConfig,
+)
+from .daily import daily_strategy_params, run_backtest_daily, run_enrich_daily
 from .demo import run_offline_demo
+from .evaluation import compute_metrics
 from .doctor import format_report, run_diagnostics
 from .enrich import (
     align_underlying,
@@ -242,11 +249,81 @@ def _build_parser() -> argparse.ArgumentParser:
     enr = sub.add_parser("enrich", help="Alinea, calcula IV y filtra.")
     enr.add_argument("--start", default=None)
     enr.add_argument("--end", default=None)
+
+    end_ = sub.add_parser(
+        "enrich-daily",
+        help="Cura las velas diarias de Polygon (bid/ask sintético, sin red).",
+    )
+    end_.add_argument("--start", default=None)
+    end_.add_argument("--end", default=None)
+    end_.add_argument("--price-source", choices=["close", "vwap"], default="close")
+    end_.add_argument("--assumed-spread", type=float, default=0.05,
+                      help="Spread relativo supuesto para construir bid y ask.")
+    end_.add_argument("--min-prev-volume", type=float, default=0.0,
+                      help="Volumen mínimo (exclusivo) de la rueda anterior.")
+
+    btd = sub.add_parser("backtest-daily", help="Backtest sobre el dataset curado diario.")
+    btd.add_argument("--start", default=None)
+    btd.add_argument("--end", default=None)
+    btd.add_argument("--lag-sessions", type=int, nargs="+", default=[1],
+                     help="Ruedas entre señal y ejecución; varios valores comparan.")
+    btd.add_argument("--min-edge", type=float, default=5.0)
+    btd.add_argument("--stop-loss", type=float, default=500.0,
+                     help="Pérdida no realizada que cierra la posición; 0 lo desactiva.")
     return parser
+
+
+def _run_daily(args: argparse.Namespace) -> None:
+    """Subcomandos del modo diario: trabajan sólo con archivos locales."""
+    data_root = Path(args.data_root)
+    tickers = list(args.tickers)
+    if args.command == "enrich-daily":
+        frame, report = run_enrich_daily(
+            data_root, tickers, args.start, args.end,
+            liquidity=LiquidityThresholds.for_daily_bars(
+                min_prev_day_volume=args.min_prev_volume
+            ),
+            assumptions=DailyBarAssumptions(
+                price_source=args.price_source,
+                assumed_relative_spread=args.assumed_spread,
+            ),
+        )
+        print(report.to_frame().to_string(index=False))
+        print(f"\nTasa de supervivencia: {report.survival_rate:.2%}")
+        iv = frame["iv_american"].dropna()
+        if not iv.empty:
+            print(f"IV americana: mediana {iv.median():.1%} sobre {len(iv):,} filas "
+                  f"(bid/ask sintético, spread supuesto {args.assumed_spread:.0%})")
+        return
+
+    print("\nBACKTEST DIARIO — bid/ask sintético, ver advertencias en daily.py")
+    print(f"{'latencia':>10} {'operaciones':>12} {'P&L USD':>12} {'hit rate':>9} "
+          f"{'edge capt.':>11} {'Sharpe':>8}")
+    for lag in args.lag_sessions:
+        result = run_backtest_daily(
+            data_root, tickers,
+            daily_strategy_params(
+                lag, min_net_edge=args.min_edge,
+                stop_loss_usd=args.stop_loss or None,
+            ),
+            ExecutionCosts(min_net_edge=args.min_edge),
+            args.start, args.end,
+        )
+        metrics = compute_metrics(result)
+        print(f"{lag:>6} rueda {metrics.n_trades:>12} {metrics.total_pnl:>12,.0f} "
+              f"{metrics.hit_rate:>9.2f} {metrics.edge_capture:>11.2f} "
+              f"{metrics.sharpe:>8.2f}")
+        if not result.trades.empty:
+            motivos = result.trades["exit_reason"].value_counts().to_dict()
+            print("         cierres: " + ", ".join(f"{k}={v}" for k, v in motivos.items()))
 
 
 async def _run(args: argparse.Namespace) -> None:
     """Despacha el subcomando elegido."""
+
+    if args.command in {"enrich-daily", "backtest-daily"}:
+        _run_daily(args)
+        return
 
     credentials = (
         AlpacaCredentials(api_key="offline", secret_key="offline")
