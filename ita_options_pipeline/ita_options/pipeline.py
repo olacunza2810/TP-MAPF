@@ -508,9 +508,6 @@ async def _run(args: argparse.Namespace) -> None:
     if args.command in {"enrich-daily", "backtest-daily"}:
         _run_daily(args)
         return
-    if args.command == "paper-run":
-        _run_paper(args)
-        return
 
     credentials = (
         AlpacaCredentials(api_key="offline", secret_key="offline")
@@ -566,7 +563,14 @@ def main() -> None:
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
     try:
-        asyncio.run(_run(args))
+        if args.command == "paper-run":
+            # El loop de paper es sincrónico y cada ciclo abre su propio event
+            # loop con asyncio.run para pedir datos: no puede correr dentro de
+            # otro event loop, o cada ciclo falla con "asyncio.run() cannot be
+            # called from a running event loop".
+            _run_paper(args)
+        else:
+            asyncio.run(_run(args))
     except RuntimeError as exc:
         # Falta de credenciales o de datos: es un problema de configuración del
         # usuario, no un bug. Un traceback acá sólo esconde el mensaje útil.

@@ -23,6 +23,7 @@ ni costo de préstamo. El reporte de sesión lo advierte.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -48,6 +49,7 @@ from .router import Timing, close_options, execute_mleg
 __all__ = ["CycleReport", "LiveRunner", "mark_value", "write_session_report"]
 
 NY = ZoneInfo("America/New_York")
+_LOG = logging.getLogger(__name__)
 
 SESSION_WARNINGS = [
     "Feed indicative: los quotes llegan demorados y el paper llena contra NBBO en "
@@ -195,6 +197,10 @@ class LiveRunner:
         except Exception as exc:  # noqa: BLE001 - un ciclo fallido no detiene el loop
             self._errors += 1
             self.ledger.event("cycle_error", {"error": repr(exc), "consecutive": self._errors})
+            # Un error de ciclo nunca debe pasar en silencio: el loop sigue, pero
+            # quien lo mira tiene que verlo en la consola.
+            _LOG.warning("Ciclo fallido (%d seguidos de %d permitidos): %r",
+                         self._errors, self.settings.max_consecutive_errors, exc)
             if self._errors >= self.settings.max_consecutive_errors:
                 self._halt("errores_consecutivos")
             report.phase = "error"

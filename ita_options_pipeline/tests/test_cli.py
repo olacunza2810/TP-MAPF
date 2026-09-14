@@ -38,5 +38,30 @@ def test_opciones_del_backtest_diario() -> None:
     assert parse_args(["backtest-daily", "--execute-at", "close"]).execute_at == "close"
 
 
+def test_paper_run_no_corre_dentro_de_un_event_loop(monkeypatch) -> None:
+    """Regresión: cada ciclo de paper-run usa asyncio.run para pedir datos.
+
+    Si ``main`` despacha ``paper-run`` dentro de ``asyncio.run``, esa llamada
+    falla con "cannot be called from a running event loop" en cada ciclo.
+    """
+    import asyncio
+    import sys
+
+    from ita_options import pipeline
+
+    calls: list[str] = []
+
+    def fake_run_paper(args) -> None:
+        async def fetch() -> str:
+            return "datos"
+
+        calls.append(asyncio.run(fetch()))
+
+    monkeypatch.setattr(pipeline, "_run_paper", fake_run_paper)
+    monkeypatch.setattr(sys, "argv", ["pipeline", "--tickers", "RTX", "paper-run"])
+    pipeline.main()
+    assert calls == ["datos"]
+
+
 def test_tickers_por_defecto() -> None:
     assert parse_args(["backtest-daily"]).tickers == ["RTX", "BA"]
