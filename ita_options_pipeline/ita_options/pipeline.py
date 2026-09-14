@@ -50,7 +50,7 @@ __all__ = ["OptionsPipeline", "main", "parse_args"]
 
 _COMMANDS = (
     "doctor", "demo", "universe", "detect", "record", "backfill", "enrich",
-    "enrich-daily", "backtest-daily",
+    "enrich-daily", "backtest-daily", "paper-run",
 )
 
 
@@ -285,6 +285,26 @@ def _build_parser() -> argparse.ArgumentParser:
     btd.add_argument("--report-dir", default=None,
                      help="Carpeta donde guardar resumen, operaciones y desgloses en CSV.")
 
+    paper = sub.add_parser(
+        "paper-run",
+        help="Loop intradía de paper trading en Alpaca (dry-run salvo --live).",
+    )
+    paper.add_argument("--live", action="store_true",
+                       help="Enviar órdenes a la cuenta paper. Sin esto sólo registra el plan.")
+    paper.add_argument("--max-cycles", type=int, default=None)
+    paper.add_argument("--cycle-seconds", type=float, default=90.0)
+    paper.add_argument("--contracts", type=int, default=1)
+    paper.add_argument("--max-open", type=int, default=5)
+    paper.add_argument("--kill-switch", type=float, default=2000.0)
+    paper.add_argument("--daily-loss", type=float, default=3000.0)
+    paper.add_argument("--kill-file", default="KILL",
+                       help="Si este archivo existe, se detienen entradas y se cierra todo.")
+    paper.add_argument("--ledger", default=None,
+                       help="Ledger SQLite (por defecto <data-root>/paper/ledger.sqlite).")
+    paper.add_argument("--report-dir", default="reportes/paper")
+    paper.add_argument("--detectors", nargs="+",
+                       default=["monotonicity", "vertical_bound", "butterfly", "put_call_parity"])
+
     # ``--tickers`` también dentro de cada subcomando. SUPPRESS evita que el
     # default del subcomando pise el valor pasado antes del subcomando.
     for command in sub.choices.values():
@@ -445,11 +465,51 @@ def _run_daily(args: argparse.Namespace) -> None:
         print(f"\nReportes en {report_dir.resolve()}")
 
 
+def _run_paper(args: argparse.Namespace) -> None:
+    """Loop de paper trading. Rechaza credenciales de cuenta real."""
+    from alpaca.trading.client import TradingClient
+
+    from .config import ExecutionSettings
+    from .execution.broker import AlpacaBroker
+    from .execution.ledger import Ledger
+    from .execution.live_data import AlpacaMarketData
+    from .execution.live_runner import LiveRunner
+
+    credentials = AlpacaCredentials.from_env()
+    if not credentials.paper:
+        raise RuntimeError("paper-run sólo opera la cuenta paper: ALPACA_PAPER=false detectado.")
+    data_root = Path(args.data_root)
+    settings = ExecutionSettings(
+        contracts=args.contracts, max_open_strategies=args.max_open,
+        kill_switch_usd=args.kill_switch, daily_loss_limit_usd=args.daily_loss,
+        cycle_seconds=args.cycle_seconds, kill_file=Path(args.kill_file),
+        detectors=tuple(args.detectors),
+    )
+    config = PipelineConfig(credentials=credentials, underlyings=tuple(args.tickers),
+                            data_root=data_root)
+    dividends_path = data_root / "polygon" / "dividends.parquet"
+    dividends = pd.read_parquet(dividends_path) if dividends_path.exists() else None
+    ledger = Ledger(Path(args.ledger) if args.ledger else data_root / "paper" / "ledger.sqlite")
+    runner = LiveRunner(
+        AlpacaBroker(TradingClient(credentials.api_key, credentials.secret_key, paper=True)),
+        AlpacaMarketData(config, settings), ledger, settings,
+        dividends=dividends, dry_run=not args.live, report_dir=Path(args.report_dir),
+    )
+    mode = "LIVE (paper)" if args.live else "dry-run"
+    print(f"paper-run {mode}: {', '.join(args.tickers)} | detectores {', '.join(args.detectors)}"
+          f" | kill-switch {args.kill_switch:g} USD | corte manual: crear '{args.kill_file}'")
+    report = runner.run(max_cycles=args.max_cycles)
+    print(f"Reporte de sesión: {report}")
+
+
 async def _run(args: argparse.Namespace) -> None:
     """Despacha el subcomando elegido."""
 
     if args.command in {"enrich-daily", "backtest-daily"}:
         _run_daily(args)
+        return
+    if args.command == "paper-run":
+        _run_paper(args)
         return
 
     credentials = (

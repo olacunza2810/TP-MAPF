@@ -29,6 +29,7 @@ from alpaca.data.requests import (
     OptionBarsRequest,
     OptionSnapshotRequest,
     StockBarsRequest,
+    StockLatestQuoteRequest,
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
@@ -199,6 +200,24 @@ class AsyncAlpacaGateway:
             adjustment="raw",
         )
         return await self._call(self._stock.get_stock_bars, request)
+
+    async def fetch_stock_latest_mids(self, symbols: Sequence[str]) -> dict[str, float]:
+        """Mid del último quote de cada acción, para el spot en vivo.
+
+        Args:
+            symbols: Tickers.
+
+        Returns:
+            Diccionario ticker -> mid. Omite los tickers sin bid o ask.
+        """
+        request = StockLatestQuoteRequest(symbol_or_symbols=list(symbols))
+        quotes = await self._call(self._stock.get_stock_latest_quote, request)
+        mids: dict[str, float] = {}
+        for symbol, quote in quotes.items():
+            bid, ask = float(quote.bid_price or 0), float(quote.ask_price or 0)
+            if bid > 0 and ask > 0:
+                mids[str(symbol)] = (bid + ask) / 2.0
+        return mids
 
     # ------------------------------------------------------------------ #
     # Universo de contratos

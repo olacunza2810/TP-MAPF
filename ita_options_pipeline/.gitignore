@@ -10,3 +10,8 @@ venv/
 # Data lake local: no versionar los datos grabados
 data/
 *.parquet
+
+# Paper trading: ledger local y archivo de corte manual
+*.sqlite
+KILL
+.Rhistory

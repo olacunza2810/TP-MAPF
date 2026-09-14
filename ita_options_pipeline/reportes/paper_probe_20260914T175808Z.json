@@ -1,0 +1,133 @@
+{
+  "submit": true,
+  "answers": {
+    "credit_limit_sign": -1,
+    "conversion_mleg_aceptada": false,
+    "reversa_mleg_aceptada": true
+  },
+  "log": [
+    {
+      "step": "cuenta",
+      "at": "2026-09-14T17:57:54.463704+00:00",
+      "ok": true,
+      "detalle": "paper | nivel de opciones 3 (aprobado 3) | buying power de opciones 100,000 USD | short habilitado | multiplicador 4"
+    },
+    {
+      "step": "reloj",
+      "at": "2026-09-14T17:57:54.663822+00:00",
+      "abierto": true
+    },
+    {
+      "step": "contratos",
+      "at": "2026-09-14T17:57:56.320079+00:00",
+      "spot": 194.32,
+      "vencimiento": "2026-10-02",
+      "atm": 195.0,
+      "superior": 197.5,
+      "ancho": 2.5
+    },
+    {
+      "step": "1_vertical_debito_limit_+2.5",
+      "at": "2026-09-14T17:57:56.561846+00:00",
+      "resultado": "aceptada",
+      "id": "f9fa48ea-9cd8-4917-b290-67fa9918f810",
+      "estado": "pending_new"
+    },
+    {
+      "step": "1_estado_+2.5",
+      "at": "2026-09-14T17:57:57.752079+00:00",
+      "estado": "filled"
+    },
+    {
+      "step": "cancelar",
+      "at": "2026-09-14T17:57:57.914639+00:00",
+      "id": "f9fa48ea-9cd8-4917-b290-67fa9918f810",
+      "aviso": "{\"code\":42210000,\"message\":\"order is already in \\\"filled\\\" state\"}"
+    },
+    {
+      "step": "cerrar_posicion",
+      "at": "2026-09-14T17:57:58.264409+00:00",
+      "simbolo": "RTX261002C00197500"
+    },
+    {
+      "step": "cerrar_posicion",
+      "at": "2026-09-14T17:57:59.482099+00:00",
+      "simbolo": "RTX261002C00195000"
+    },
+    {
+      "step": "respuesta_1",
+      "at": "2026-09-14T17:58:00.482885+00:00",
+      "CREDIT_LIMIT_SIGN": -1,
+      "nota": "confirmar o actualizar ita_options/execution/orders.py"
+    },
+    {
+      "step": "2_comprar_100_acciones",
+      "at": "2026-09-14T17:58:00.708110+00:00",
+      "resultado": "aceptada",
+      "id": "1d5989cd-33e9-496b-9295-231d2ad61076",
+      "estado": "pending_new"
+    },
+    {
+      "step": "2_estado_accion",
+      "at": "2026-09-14T17:58:02.151838+00:00",
+      "estado": "partially_filled"
+    },
+    {
+      "step": "2_mleg_conversion",
+      "at": "2026-09-14T17:58:02.325656+00:00",
+      "resultado": "rechazada",
+      "error": "{\"code\":40310000,\"message\":\"account not eligible to trade uncovered option contracts\"}",
+      "request": {
+        "qty": 1.0,
+        "type": "limit",
+        "time_in_force": "day",
+        "order_class": "mleg",
+        "client_order_id": "ita-18c76ffe584d00ed56ffb5fd",
+        "legs": [
+          {
+            "symbol": "RTX261002C00195000",
+            "ratio_qty": 1.0,
+            "side": "sell",
+            "position_intent": "sell_to_open"
+          },
+          {
+            "symbol": "RTX261002P00195000",
+            "ratio_qty": 1.0,
+            "side": "buy",
+            "position_intent": "buy_to_open"
+          }
+        ],
+        "limit_price": -388.65
+      }
+    },
+    {
+      "step": "cerrar_posicion",
+      "at": "2026-09-14T17:58:02.862249+00:00",
+      "simbolo": "RTX"
+    },
+    {
+      "step": "3_vender_corto_100_acciones",
+      "at": "2026-09-14T17:58:04.085649+00:00",
+      "resultado": "aceptada",
+      "id": "60d6eed7-20b1-4130-9233-02b01efb27bb",
+      "estado": "pending_new"
+    },
+    {
+      "step": "3_estado_accion",
+      "at": "2026-09-14T17:58:05.396195+00:00",
+      "estado": "partially_filled"
+    },
+    {
+      "step": "3_mleg_reversa",
+      "at": "2026-09-14T17:58:05.635495+00:00",
+      "resultado": "aceptada",
+      "id": "6ffb8d3d-e66f-4044-ac3c-de9994a8a14b",
+      "estado": "pending_new"
+    },
+    {
+      "step": "cerrar_posicion",
+      "at": "2026-09-14T17:58:06.171066+00:00",
+      "simbolo": "RTX"
+    }
+  ]
+}

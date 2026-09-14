@@ -93,10 +93,15 @@ class Probe:
         return order
 
     def wait(self, order: Any, seconds: float) -> str:
-        """Espera hasta ``seconds`` a que la orden llene o llegue a un estado final."""
+        """Espera hasta ``seconds`` a que la orden llene por completo o termine.
+
+        ``partially_filled`` no corta la espera: la primera corrida en paper
+        envió la ``mleg`` con la compra de acciones todavía parcial y Alpaca la
+        rechazó por descubierta.
+        """
         deadline = time.monotonic() + seconds
         status = str(order.status.value)
-        while time.monotonic() < deadline and status not in FINAL | FILLED:
+        while time.monotonic() < deadline and status not in FINAL:
             time.sleep(1.0)
             status = str(self.client.get_order_by_id(order.id).status.value)
         return status
@@ -231,14 +236,19 @@ def main(argv: list[str] | None = None) -> None:
         # 2. Conversión: acción comprada, luego -C +P.
         stock = probe.send("2_comprar_100_acciones", MarketOrderRequest(
             symbol=ticker, qty=100, side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
-        if stock is not None:
-            probe.record("2_estado_accion", estado=probe.wait(stock, args.fill_timeout))
+        stock_status = probe.wait(stock, args.fill_timeout) if stock is not None else None
+        probe.record("2_estado_accion", estado=stock_status)
         conversion = [_leg(calls[atm], -1, atm, "c", expiration),
                       _leg(puts[atm], +1, atm, "p", expiration)]
-        order = probe.send("2_mleg_conversion", build_mleg_order(
-            conversion, 1, impossible, client_order_id=strategy_order_id(
-                "probe_conversion", [calls[atm], puts[atm]], time.time(), True)))
-        answers["conversion_mleg_aceptada"] = (order is not None) if args.submit else None
+        order = None
+        if args.submit and stock_status != "filled":
+            probe.record("2_mleg_omitida", motivo="las acciones no llenaron por completo")
+            answers["conversion_mleg_aceptada"] = None
+        else:
+            order = probe.send("2_mleg_conversion", build_mleg_order(
+                conversion, 1, impossible, client_order_id=strategy_order_id(
+                    "probe_conversion", [calls[atm], puts[atm]], time.time(), True)))
+            answers["conversion_mleg_aceptada"] = (order is not None) if args.submit else None
         probe.cancel(order)
         probe.close([calls[atm], puts[atm], ticker])
 
@@ -249,15 +259,19 @@ def main(argv: list[str] | None = None) -> None:
             short = probe.send("3_vender_corto_100_acciones", MarketOrderRequest(
                 symbol=ticker, qty=100, side=OrderSide.SELL,
                 time_in_force=TimeInForce.DAY))
-            if short is not None:
-                probe.record("3_estado_accion",
-                             estado=probe.wait(short, args.fill_timeout))
+            short_status = probe.wait(short, args.fill_timeout) if short is not None else None
+            probe.record("3_estado_accion", estado=short_status)
             reverse = [_leg(calls[atm], +1, atm, "c", expiration),
                        _leg(puts[atm], -1, atm, "p", expiration)]
-            order = probe.send("3_mleg_reversa", build_mleg_order(
-                reverse, 1, impossible, client_order_id=strategy_order_id(
-                    "probe_reverse", [calls[atm], puts[atm]], time.time(), True)))
-            answers["reversa_mleg_aceptada"] = (order is not None) if args.submit else None
+            order = None
+            if args.submit and short_status != "filled":
+                probe.record("3_mleg_omitida", motivo="el corto no llenó por completo")
+                answers["reversa_mleg_aceptada"] = None
+            else:
+                order = probe.send("3_mleg_reversa", build_mleg_order(
+                    reverse, 1, impossible, client_order_id=strategy_order_id(
+                        "probe_reverse", [calls[atm], puts[atm]], time.time(), True)))
+                answers["reversa_mleg_aceptada"] = (order is not None) if args.submit else None
             probe.cancel(order)
             probe.close([calls[atm], puts[atm], ticker])
     finally:

@@ -22,7 +22,7 @@ ita_options/
 ├── doctor.py       Diagnóstico de conectividad, permisos de cuenta y datos disponibles
 ├── execution/      Paper trading: órdenes mleg (orders.py) y riesgo previo (risk.py)
 └── pipeline.py     Orquestador + CLI
-tests/                         78 tests, incluidos tests de contrato contra el SDK real
+tests/                         98 tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
 informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
@@ -59,7 +59,7 @@ ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 78 tests, sin red ni credenciales
+pytest                              # 98 tests, sin red ni credenciales
 python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
 
@@ -337,9 +337,41 @@ convención sino una barrera.
 Sharpe deflactado por cantidad de configuraciones probadas. A igual Sharpe
 anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte.
 
-## Paper trading con Alpaca (en construcción)
+## Paper trading con Alpaca (piloto)
 
-Hoy el código **no envía órdenes de estrategia**. Qué hay:
+```powershell
+python -m ita_options.pipeline doctor
+python -m ita_options.pipeline --tickers RTX paper-run --max-cycles 5          # dry-run: sólo registra el plan
+python -m ita_options.pipeline --tickers RTX paper-run --live --contracts 1    # envía a la cuenta paper
+New-Item KILL                                                                  # corte manual: detiene entradas y cierra todo
+```
+
+`paper-run` corre un ciclo cada 90 segundos con el mercado abierto:
+
+1. Snapshots del universo chico (±10% del spot, hasta 60 días).
+2. Detección de monotonicidad, spread vertical, butterflies consecutivas y paridad.
+3. Deduplicación por estructura.
+4. Controles previos: pérdida máxima, profundidad, fecha ex y short.
+5. Enrutamiento: `mleg` para las estructuras de opciones y la secuencia de patas separadas para la paridad.
+6. Gestión de riesgo: kill-switch por estructura, límite de pérdida diaria, cierre antes del vencimiento y archivo `KILL`.
+7. Reconciliación del ledger SQLite contra las posiciones de Alpaca en cada ciclo.
+
+Al terminar escribe `reportes/paper/session_<fecha>/` con estrategias, órdenes, eventos, ciclos y un resumen.
+
+**Secuencia de la paridad** (`execution/parity.py`). En paper, Alpaca rechazó con `40310000` una `mleg` que vendía el call mientras la compra de acciones seguía `partially_filled`. La secuencia es:
+
+1. Acciones con límite marcable.
+2. **Fill completo o cancelación**; sólo cuentan lotes de 100 y el remanente se deshace.
+3. Posición confirmada en el broker.
+4. Edge residual recalculado con el precio real de las acciones.
+5. Recién ahí la `mleg` de opciones.
+6. Si la `mleg` es rechazada o no llena, se deshacen las acciones.
+
+El cierre invierte el orden: opciones primero, acciones después.
+
+**Límites del piloto.** Con el feed `indicative` valida la cañería (órdenes, estado, reconciliación, kill-switch), no el edge. El paper de Alpaca no simula slippage, dividendos ni costo de préstamo. Los ejercicios y asignaciones se sincronizan al día siguiente, por eso las estructuras que vencen se cierran antes del cierre de la rueda.
+
+Componentes:
 
 - **`doctor`**: además de conectividad y datos, verifica nivel de opciones (los spreads `mleg` requieren nivel 3), buying power de opciones, short habilitado y reloj de mercado.
 - **`ita_options/execution/orders.py`**: traduce el `leg_spec` de una señal a un `LimitOrderRequest` `mleg`.
@@ -365,15 +397,10 @@ python scripts/paper_probe.py --underlying RTX            # plan
 python scripts/paper_probe.py --underlying RTX --submit   # en paper, con mercado abierto
 ```
 
-Falta:
+- **`execution/broker.py`, `ledger.py`, `router.py`, `parity.py`, `live_data.py` y `live_runner.py`**: interfaz del broker, ledger y reconciliación, ejecución `mleg`, secuencia de paridad, cadena en vivo y loop.
+- **`tests/fake_broker.py`**: broker falso que reproduce los fills parciales y el rechazo de opciones descubiertas observados en paper.
 
-- secuencia de la paridad en patas separadas;
-- estado y reconciliación;
-- loop intradía `paper-run`;
-- kill-switch en vivo;
-- reporte de sesión.
-
-Dependen de lo que responda la prueba. Con el feed `indicative`, el piloto valida la cañería de órdenes, no el edge.
+**No probado todavía:** el loop contra la API real. Correr primero `paper-run` en dry-run durante una rueda completa.
 
 ## Tests
 
@@ -381,7 +408,7 @@ Dependen de lo que responda la prueba. Con el feed `indicative`, el piloto valid
 pytest
 ```
 
-78 tests, sin red ni credenciales. La estrategia es generar los precios con el
+98 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
 

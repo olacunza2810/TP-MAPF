@@ -18,6 +18,7 @@ __all__ = [
     "PricingAssumptions",
     "DailyBarAssumptions",
     "IngestionSettings",
+    "ExecutionSettings",
     "PipelineConfig",
 ]
 
@@ -176,6 +177,73 @@ class IngestionSettings:
     snapshot_batch_size: int = 100
     max_retries: int = 5
     strike_window: float = 0.25
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionSettings:
+    """Parámetros del piloto de paper trading.
+
+    Attributes:
+        contracts: Unidades por estructura (100 acciones por unidad en la paridad).
+        min_edge_usd: Edge neto mínimo por unidad, en detección y al ejecutar.
+        max_open_strategies: Tope de estructuras abiertas simultáneas.
+        max_loss_per_trade: Tope de pérdida máxima al vencimiento por operación.
+        kill_switch_usd: Pérdida no realizada por estructura que fuerza el cierre.
+        daily_loss_limit_usd: Pérdida diaria (realizada + no realizada) que
+            detiene las entradas y cierra todo.
+        cycle_seconds: Segundos entre ciclos con el mercado abierto.
+        entry_start_minutes: Minutos después de la apertura antes de entrar.
+        entry_stop_minutes: Minutos antes del cierre en que se dejan de abrir
+            estructuras y se cierran las que vencen ese día.
+        stock_fill_timeout_s: Espera máxima del fill completo de las acciones.
+        option_fill_timeout_s: Espera máxima del fill de una ``mleg``.
+        unwind_timeout_s: Espera máxima para deshacer acciones.
+        order_poll_s: Intervalo entre consultas de estado de una orden.
+        coverage_checks: Consultas de posición antes de declarar la cobertura
+            en acciones no confirmada.
+        stock_limit_tolerance: USD por acción que el límite de la pata de
+            acción cede sobre el precio de la señal para ser marcable.
+        max_reprices: Re-precios de una ``mleg`` no llenada.
+        reprice_step: USD por unidad escalada que empeora cada re-precio.
+        close_cushion: USD por unidad escalada que se cede al cerrar.
+        max_quote_age_s: Antigüedad máxima de un quote para considerarlo.
+        strike_window: Fracción del spot que delimita el universo en vivo.
+        max_dte: Horizonte máximo del universo en vivo.
+        detectors: Detectores habilitados en vivo.
+        kill_file: Si este archivo existe, se detienen las entradas y se cierra todo.
+        reconcile_tolerance_cycles: Ciclos seguidos con diferencias de
+            reconciliación antes de detener las entradas.
+        max_consecutive_errors: Errores de datos o API seguidos que detienen
+            las entradas.
+    """
+
+    contracts: int = 1
+    min_edge_usd: float = 5.0
+    max_open_strategies: int = 5
+    max_loss_per_trade: float = 2000.0
+    kill_switch_usd: float = 2000.0
+    daily_loss_limit_usd: float = 3000.0
+    cycle_seconds: float = 90.0
+    entry_start_minutes: int = 15
+    entry_stop_minutes: int = 30
+    stock_fill_timeout_s: float = 30.0
+    option_fill_timeout_s: float = 60.0
+    unwind_timeout_s: float = 30.0
+    order_poll_s: float = 2.0
+    coverage_checks: int = 5
+    stock_limit_tolerance: float = 0.05
+    max_reprices: int = 1
+    reprice_step: float = 0.05
+    close_cushion: float = 0.10
+    max_quote_age_s: float = 1200.0
+    strike_window: float = 0.10
+    max_dte: int = 60
+    detectors: tuple[str, ...] = (
+        "monotonicity", "vertical_bound", "butterfly", "put_call_parity",
+    )
+    kill_file: Path = Path("KILL")
+    reconcile_tolerance_cycles: int = 2
+    max_consecutive_errors: int = 3
 
 
 @dataclass(frozen=True, slots=True)

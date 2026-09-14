@@ -11,8 +11,15 @@ Reglas de Alpaca que se aplican acá (documentación de options level 3):
   acción separada;
 - contratos enteros, ``time_in_force`` ``day`` o ``gtc``, sin extended hours.
 
-Pendiente de confirmar en paper (``scripts/paper_probe.py``): el signo con que
-Alpaca interpreta el ``limit_price`` de una ``mleg`` de crédito.
+Convención de signo confirmada en paper (``reportes/paper_probe_20260914T175808Z.json``):
+un vertical de débito con ``limit_price=+2.5`` llenó de inmediato, así que en
+una ``mleg`` el precio positivo es débito y el negativo es crédito.
+
+La misma prueba mostró que Alpaca rechaza una ``mleg`` que vende un call si la
+compra de acciones que debía cubrirlo todavía está ``partially_filled``
+(``40310000: account not eligible to trade uncovered option contracts``). Por
+eso la paridad nunca envía la pata de opciones antes de confirmar la posición
+completa en acciones (ver :mod:`ita_options.execution.parity`).
 """
 
 from __future__ import annotations
@@ -41,9 +48,8 @@ __all__ = [
 #: Alpaca muestra estructuras de hasta cuatro patas; no se prueba más allá.
 MAX_MLEG_LEGS = 4
 
-#: HIPÓTESIS a confirmar con ``scripts/paper_probe.py``: en una ``mleg`` un
-#: ``limit_price`` positivo es débito (se paga) y uno negativo es crédito (se
-#: cobra). Si la prueba muestra lo contrario, cambiar a ``+1``.
+#: Signo del ``limit_price`` de una ``mleg`` de crédito. Confirmado en paper el
+#: 14/09/2026: positivo es débito (se paga) y negativo es crédito (se cobra).
 CREDIT_LIMIT_SIGN = -1
 
 
@@ -121,7 +127,7 @@ def scaled_net_debit(
 def mleg_limit_price(net_debit: float) -> float:
     """Traduce un precio neto (positivo = débito) a la convención de Alpaca.
 
-    Usa :data:`CREDIT_LIMIT_SIGN`, que está pendiente de confirmar en paper.
+    Usa :data:`CREDIT_LIMIT_SIGN`, confirmado en paper.
     """
     sign = 1.0 if net_debit >= 0 else float(CREDIT_LIMIT_SIGN)
     return round(abs(net_debit) * sign, 2)
