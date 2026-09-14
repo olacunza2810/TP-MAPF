@@ -52,8 +52,13 @@ def quotes_from_daily_bars(
         frame: Velas con ``close`` y opcionalmente ``vwap``.
         assumptions: Fuente de precio y spread supuesto.
 
+    Si la vela trae ``open``, se construyen además ``bid_open`` y ``ask_open``
+    con la misma regla sobre la apertura: son los lados contra los que el
+    backtest ejecuta cuando la orden se llena en la apertura de la rueda.
+
     Returns:
-        Copia con ``bid``, ``ask``, ``last_trade_price`` y ``spread_is_proxy``.
+        Copia con ``bid``, ``ask``, ``bid_open``, ``ask_open``,
+        ``last_trade_price`` y ``spread_is_proxy``.
 
     Raises:
         KeyError: si falta ``close``.
@@ -75,6 +80,14 @@ def quotes_from_daily_bars(
     )
     out["bid"] = (price - half).clip(lower=0.0)
     out["ask"] = price + half
+    if "open" in out.columns:
+        opening = pd.to_numeric(out["open"], errors="coerce")
+        half_open = np.maximum(
+            opening * assumptions.assumed_relative_spread / 2.0,
+            assumptions.min_half_spread,
+        )
+        out["bid_open"] = (opening - half_open).clip(lower=0.0)
+        out["ask_open"] = opening + half_open
     out["last_trade_price"] = close
     out["spread_is_proxy"] = True
     return out

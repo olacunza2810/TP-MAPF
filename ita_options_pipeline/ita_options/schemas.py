@@ -42,6 +42,8 @@ OPTION_QUOTE_SCHEMA: Final[dict[str, str]] = {
     "low": "float64",
     "close": "float64",
     "vwap": "float64",
+    "bid_open": "float64",
+    "ask_open": "float64",
     # Actividad
     "volume": "float64",
     "volume_prev_day": "float64",

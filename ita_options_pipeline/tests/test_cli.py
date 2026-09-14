@@ -34,6 +34,8 @@ def test_opciones_del_backtest_diario() -> None:
     assert args.edge_check is False
     assert args.report_dir == "reportes"
     assert args.min_edge == 5.0 and args.stop_loss == 500.0
+    assert args.execute_at == "open"
+    assert parse_args(["backtest-daily", "--execute-at", "close"]).execute_at == "close"
 
 
 def test_tickers_por_defecto() -> None:

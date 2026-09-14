@@ -278,6 +278,8 @@ def _build_parser() -> argparse.ArgumentParser:
     btd.add_argument("--min-edge", type=float, default=5.0)
     btd.add_argument("--stop-loss", type=float, default=500.0,
                      help="Pérdida no realizada que cierra la posición; 0 lo desactiva.")
+    btd.add_argument("--execute-at", choices=["open", "close"], default="open",
+                     help="Llenar la orden en la apertura (default) o al cierre de la rueda.")
     btd.add_argument("--no-edge-check", dest="edge_check", action="store_false",
                      help="Ejecutar aunque el edge haya desaparecido (comportamiento previo).")
     btd.add_argument("--report-dir", default=None,
@@ -383,7 +385,8 @@ def _run_daily(args: argparse.Namespace) -> None:
     print("\nBACKTEST DIARIO — bid/ask sintético, ver advertencias en daily.py")
     print(f"fuente {price_source} | spread supuesto {spread:.1%} | min-edge "
           f"{args.min_edge:g} USD | stop-loss {stop_loss or 'desactivado'} | "
-          f"edge al ejecutar: {'sí' if args.edge_check else 'no'}")
+          f"edge al ejecutar: {'sí' if args.edge_check else 'no'} | "
+          f"ejecución al {'open' if args.execute_at == 'open' else 'cierre'}")
 
     summary_rows = []
     for lag in args.lag_sessions:
@@ -392,6 +395,7 @@ def _run_daily(args: argparse.Namespace) -> None:
             daily_strategy_params(
                 lag, min_net_edge=args.min_edge, stop_loss_usd=stop_loss,
                 require_edge_at_execution=args.edge_check,
+                execution_price="open" if args.execute_at == "open" else "quote",
             ),
             ExecutionCosts(min_net_edge=args.min_edge),
             args.start, args.end,
@@ -414,7 +418,8 @@ def _run_daily(args: argparse.Namespace) -> None:
             "price_source": price_source, "assumed_spread": spread,
             "start": args.start, "end": args.end, "lag_sessions": lag,
             "min_edge": args.min_edge, "stop_loss": stop_loss,
-            "edge_check": args.edge_check, "n_trades": metrics.n_trades,
+            "edge_check": args.edge_check, "execute_at": args.execute_at,
+            "n_trades": metrics.n_trades,
             "total_pnl": metrics.total_pnl, "hit_rate": metrics.hit_rate,
             "edge_capture": metrics.edge_capture, "sharpe": metrics.sharpe,
             "max_drawdown": metrics.max_drawdown,
@@ -424,7 +429,7 @@ def _run_daily(args: argparse.Namespace) -> None:
         })
         if report_dir:
             tag = (f"{price_source}_spread{spread:g}_lag{lag}_sl{stop_loss or 0:g}_"
-                   f"edge{'on' if args.edge_check else 'off'}")
+                   f"edge{'on' if args.edge_check else 'off'}_{args.execute_at}")
             result.trades.to_csv(report_dir / f"trades_{tag}.csv", index=False)
             funnel.to_csv(report_dir / f"funnel_{tag}.csv", index=False)
             by_detector.to_csv(report_dir / f"by_detector_{tag}.csv", index=False)

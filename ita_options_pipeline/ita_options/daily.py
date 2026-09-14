@@ -273,8 +273,10 @@ def daily_strategy_params(lag_sessions: int = 1, **overrides: object) -> Strateg
     """Hiperparámetros del backtest para velas diarias.
 
     El backtest ejecuta en el primer corte posterior a ``señal + lag``. Un lag
-    de 12 horas más 24 por cada rueda adicional cae siempre en el cierre de la
-    rueda buscada, aunque medien un fin de semana o un cambio de horario.
+    de 12 horas más 24 por cada rueda adicional cae siempre en la rueda
+    buscada, aunque medien un fin de semana o un cambio de horario. Por defecto
+    la orden se llena en la **apertura** de esa rueda (``execution_price="open"``);
+    pasar ``execution_price="quote"`` ejecuta al cierre.
 
     Args:
         lag_sessions: Ruedas entre la señal y la ejecución. Mínimo 1.
@@ -292,6 +294,8 @@ def daily_strategy_params(lag_sessions: int = 1, **overrides: object) -> Strateg
         "execution_lag": timedelta(hours=12 + 24 * (lag_sessions - 1)),
         "min_open_interest": 0.0,
         "min_volume": 1.0,
+        # Señal al cierre de t, orden a la apertura de t + lag_sessions.
+        "execution_price": "open",
     }
     return StrategyParams(**{**base, **overrides})  # type: ignore[arg-type]
 

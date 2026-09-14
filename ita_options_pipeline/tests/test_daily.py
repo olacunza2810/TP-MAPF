@@ -143,8 +143,12 @@ def test_filtro_diario_usa_volumen_anterior_y_no_spread_ni_oi() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _write_synthetic_daily_lake(root: Path) -> list[date]:
-    """Velas diarias sin arbitraje salvo un call dislocado durante dos ruedas."""
+def _write_synthetic_daily_lake(root: Path, open_dislocated: bool = True) -> list[date]:
+    """Velas diarias sin arbitraje salvo un call dislocado durante dos ruedas.
+
+    Con ``open_dislocated=False`` la dislocación aparece sólo en el cierre: la
+    apertura de esas ruedas cotiza al precio justo.
+    """
     sessions = [d.date() for d in pd.bdate_range("2025-03-03", "2025-03-21")]
     spot, sigma, rate, div = 100.0, 0.25, 0.0425, 0.016
     expiry = pd.Timestamp("2025-04-17")
@@ -157,14 +161,16 @@ def _write_synthetic_daily_lake(root: Path) -> list[date]:
         for strike in (90.0, 95.0, 100.0, 105.0, 110.0):
             for flag in ("c", "p"):
                 price = crr_american_price(spot, strike, tau, rate, div, sigma, flag, 64)
+                opening = price
                 if flag == "c" and strike == 100.0 and index in (5, 6):
                     price += 3.0
+                    opening = price if open_dislocated else opening
                 rows.append({
                     "symbol": f"O:RTX250417{flag.upper()}{int(strike * 1000):08d}",
                     "underlying": "RTX", "timestamp": stamp, "observed_at": stamp,
                     "expiration": expiry, "strike": strike, "option_type": flag,
                     "style": "american", "multiplier": 100.0,
-                    "open": price, "high": price, "low": price,
+                    "open": opening, "high": price, "low": price,
                     "close": round(price, 2), "vwap": round(price, 2),
                     "volume": 100.0, "trade_date": pd.Timestamp(day),
                 })
@@ -213,3 +219,31 @@ def test_pipeline_diario_de_punta_a_punta(tmp_path) -> None:
     # se rechaza en vez de operar sin edge.
     assert result.diagnostics["rejected_edge_gone"] > 0
     assert (result.trades["execution_edge"] >= 5.0).all()
+    # Por defecto la orden se llena en la apertura de la rueda siguiente.
+    opened_local = pd.to_datetime(result.trades["opened_at"]).dt.tz_convert(NY)
+    assert (opened_local.dt.strftime("%H:%M") == "09:30").all()
+
+
+def test_ejecucion_al_open_usa_la_apertura_y_no_el_cierre(tmp_path) -> None:
+    """Si la dislocación existe al cierre pero no en la apertura siguiente, no se opera.
+
+    Ejecutando al cierre de t+1 la misma señal sí se llena: la diferencia entre
+    ambos modos es exactamente el precio de apertura.
+    """
+    _write_synthetic_daily_lake(tmp_path, open_dislocated=False)
+    run_enrich_daily(tmp_path, ["RTX"], pricing=PricingAssumptions(binomial_steps=64))
+    costs = ExecutionCosts(min_net_edge=5.0)
+
+    at_open = run_backtest_daily(
+        tmp_path, ["RTX"], daily_strategy_params(1, min_net_edge=5.0, stop_loss_usd=None),
+        costs,
+    )
+    at_close = run_backtest_daily(
+        tmp_path, ["RTX"],
+        daily_strategy_params(1, min_net_edge=5.0, stop_loss_usd=None,
+                              execution_price="quote"),
+        costs,
+    )
+    assert at_open.trades.empty
+    assert at_open.diagnostics["rejected_edge_gone"] > 0
+    assert not at_close.trades.empty

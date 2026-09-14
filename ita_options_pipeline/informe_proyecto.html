@@ -33,7 +33,7 @@
 opciones</h1>
 <p class="subtitle">Proyecto ITA - RTX, BA y LMT</p>
 <p class="author">Informe técnico para la presentación</p>
-<p class="date">13 de septiembre de 2026</p>
+<p class="date">14 de septiembre de 2026</p>
 </header>
 <h1 id="resumen-ejecutivo">Resumen ejecutivo</h1>
 <p>El proyecto construye un proceso reproducible para estudiar posibles
@@ -44,20 +44,36 @@ calcula volatilidad implícita mediante un árbol binomial americano,
 filtra contratos que no parecen operables, detecta inconsistencias de
 precios y finalmente simula la ejecución con costos, latencia y reglas
 de riesgo.</p>
-<p>La implementación técnica de las etapas de datos, limpieza,
-valuación, detección, backtesting y evaluación está avanzada y cuenta
-con tests. Sin embargo, el proyecto todavía no es un sistema completo en
-producción: la revisión de literatura no está documentada en el
-repositorio, no existe envío de órdenes de paper trading, no hay
-monitoreo conectado a una cuenta y no existe un P&amp;L real
-acumulado.</p>
+<p>Las etapas de datos, limpieza, valuación, detección, backtesting y
+evaluación están implementadas y cuentan con 59 tests. La evidencia
+empírica proviene de velas diarias reales descargadas de Polygon
+(Massive) con el plan gratuito: 365 contratos de RTX, BA y LMT, 7.323
+velas entre el 2 de marzo y el 11 de septiembre de 2026.</p>
+<p>Sobre esos datos se corrió una grilla factorial de 16
+configuraciones: fuente de precio, spread supuesto, latencia de
+ejecución y umbral del kill-switch. La señal se detecta al cierre y la
+orden se ejecuta a la apertura de la rueda siguiente, sólo si el edge
+sigue existiendo. En la configuración base (cierre, spread 2%, apertura
+de t+1, kill-switch de USD 2.000):</p>
+<ul>
+<li>92 operaciones con P&amp;L simulado de USD 19.055 y hit rate de
+97,8%;</li>
+<li>las 81 operaciones que llegaron al vencimiento cerraron con
+ganancia;</li>
+<li>la paridad put-call explica el 87% del P&amp;L;</li>
+<li>el Sharpe deflactado es 0,75 con N = 16 y 0,71 con N = 35.</li>
+</ul>
 <p>La distinción central para la presentación es la siguiente:</p>
 <ul>
-<li>La demo offline demuestra que la cañería funciona.</li>
-<li>Los datos de la demo son sintéticos y no son evidencia de
-rentabilidad.</li>
-<li>La conexión real con Alpaca y la ejecución paper todavía deben
-completarse.</li>
+<li>Las 16 configuraciones dan P&amp;L simulado positivo, pero
+<strong>ninguna alcanza un Sharpe deflactado de 0,95</strong>: el
+resultado no se distingue estadísticamente de lo que produciría una
+búsqueda sobre ruido.</li>
+<li>El bid y el ask son sintéticos, los cierres no son sincrónicos y el
+backtest no cobra el fondeo ni los dividendos de la paridad. El P&amp;L
+ajustado estimado de la configuración base baja a USD 17.243.</li>
+<li>La revisión de literatura, el paper trading, el monitoreo en vivo y
+el P&amp;L real acumulado siguen pendientes.</li>
 </ul>
 <h1 id="objetivo-y-pregunta-financiera">1. Objetivo y pregunta
 financiera</h1>
@@ -162,17 +178,35 @@ operar.</td>
 </tr>
 <tr>
 <td><code>backtest.py</code></td>
-<td>Simula señales, ejecuciones, cierres, costos y stop-loss.</td>
+<td>Simula señales, ejecuciones (al quote o a la apertura), control de
+edge residual, cierres, costos y kill-switch.</td>
 </tr>
 <tr>
 <td><code>evaluation.py</code></td>
-<td>Hace split temporal, grid search, métricas y Sharpe deflactado.</td>
+<td>Hace split temporal, grid search, métricas, Sharpe deflactado,
+embudo de señales y desgloses de P&amp;L.</td>
+</tr>
+<tr>
+<td><code>daily.py</code></td>
+<td>Modo diario: sella velas al cierre, calcula el volumen de la rueda
+anterior, cura y corre el backtest EOD.</td>
 </tr>
 <tr>
 <td><code>pipeline.py</code></td>
 <td>Expone la CLI: <code>demo</code>, <code>doctor</code>,
-<code>record</code>, <code>backfill</code>, <code>enrich</code> y
-<code>detect</code>.</td>
+<code>record</code>, <code>backfill</code>, <code>enrich</code>,
+<code>detect</code>, <code>enrich-daily</code> y
+<code>backtest-daily</code>.</td>
+</tr>
+<tr>
+<td><code>scripts/download_polygon.py</code></td>
+<td>Descarga velas diarias de Polygon (Massive) respetando el plan
+gratuito.</td>
+</tr>
+<tr>
+<td><code>scripts/run_daily_grid.py</code></td>
+<td>Corre la grilla factorial de 16 configuraciones y calcula el
+DSR.</td>
 </tr>
 </tbody>
 </table>
@@ -248,6 +282,91 @@ suscripción adicional.</p>
 <p>Los datos se guardan en Parquet particionado por subyacente y fecha.
 Junto al dataset se puede guardar un manifiesto con los supuestos
 usados: tasas, dividendos, umbrales, feed y parámetros del modelo.</p>
+<h2 id="modo-diario-con-polygon-massive-gratuito">Modo diario con
+Polygon (Massive) gratuito</h2>
+<p>La evidencia empírica del informe proviene de Polygon (rebautizado
+Massive), porque Alpaca no permite reconstruir cotizaciones pasadas. El
+plan gratuito impone dos restricciones que definen la arquitectura:</p>
+<ol type="1">
+<li>no incluye cotizaciones históricas de opciones
+(<code>/v3/quotes</code>) ni snapshots: sólo velas diarias OHLCV con
+VWAP por contrato;</li>
+<li>admite 5 requests por minuto.</li>
+</ol>
+<h3 id="descarga">Descarga</h3>
+<p><code>scripts/download_polygon.py</code> descarga, en un solo request
+por contrato, la serie diaria completa de su ventana. El universo se
+acota antes de pedir datos:</p>
+<ul>
+<li><strong>Vencimientos:</strong> los dos vencimientos mensuales más
+próximos en cada rueda. Cada vencimiento se descarga sólo mientras
+pertenece a ese par.</li>
+<li><strong>Strikes:</strong> dentro de ±15% del spot y, de esos, los
+cuatro más cercanos por encima y por debajo. El spot de referencia es el
+cierre de la rueda anterior al inicio de la ventana, para no seleccionar
+contratos con precios futuros.</li>
+<li><strong>Tasa:</strong> 12 segundos entre requests y backoff
+exponencial ante HTTP 429. Cada respuesta queda en caché, de modo que la
+descarga es reanudable.</li>
+</ul>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Parámetro</th>
+<th>Valor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Período</td>
+<td>2026-03-01 a 2026-09-12 (ruedas del 2 de marzo al 11 de
+septiembre)</td>
+</tr>
+<tr>
+<td>Subyacentes</td>
+<td>RTX, BA y LMT</td>
+</tr>
+<tr>
+<td>Contratos</td>
+<td>365</td>
+</tr>
+<tr>
+<td>Velas diarias de opciones</td>
+<td>7.323 (BA 3.121, RTX 2.425, LMT 1.777)</td>
+</tr>
+<tr>
+<td>Requests totales</td>
+<td>415, en unos 83 minutos</td>
+</tr>
+</tbody>
+</table>
+<p>Además se descargan las velas diarias sin ajustar de las tres
+acciones, los dividendos y los rendimientos del Tesoro.</p>
+<h3 id="curación">Curación</h3>
+<p><code>enrich-daily</code> adapta el pipeline a velas diarias sin
+tocar los detectores:</p>
+<ul>
+<li><strong>Sellado temporal.</strong> Cada vela se sella a las 16:00 de
+Nueva York de su rueda, cuando su cierre ya se conoce. El spot del
+subyacente se sella igual y se aparea con la misma rueda.</li>
+<li><strong>Bid y ask sintéticos.</strong> No hay cotizaciones, así que
+se construyen alrededor del precio de referencia (<code>close</code> o
+<code>vwap</code>) con un spread relativo supuesto:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo>=</mo><mrow><mi mathvariant="normal">max</mi><mo>&#8289;</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>p</mi><mspace width="0.167em"></mspace><mi>s</mi><mi>/</mi><mn>2</mn><mo>,</mo><mspace width="0.222em"></mspace><mn>0</mn><mo>,</mo><mn>01</mn><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">h=\max(p\,s/2,\ 0{,}01)</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mi>i</mi><mi>d</mi><mo>=</mo><mi>p</mi><mo>−</mo><mi>h</mi></mrow><annotation encoding="application/x-tex">bid=p-h</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mi>s</mi><mi>k</mi><mo>=</mo><mi>p</mi><mo>+</mo><mi>h</mi></mrow><annotation encoding="application/x-tex">ask=p+h</annotation></semantics></math>.
+Con la misma regla sobre el <code>open</code> se construyen los lados de
+la apertura, contra los que se ejecuta. Todas esas filas quedan marcadas
+con <code>spread_is_proxy=True</code>.</li>
+<li><strong>Liquidez.</strong> Sin open interest histórico ni spread
+observado, el filtro usa el volumen de la rueda anterior
+(<code>volume_prev_day &gt; 0</code>), el precio mínimo de USD 0,05, el
+rango de 7 a 180 días al vencimiento y el spot alineado.</li>
+</ul>
 <h2 id="muestra-sintética-calibrada">Muestra sintética calibrada</h2>
 <p>Como no hay NBBO histórico, la demo y la validación de los detectores
 usan un mercado generado. Para que sea un banco de pruebas válido, la
@@ -413,6 +532,12 @@ y presentar:</p>
 <p>El código ya contiene <code>calibrate_chain_sigma()</code> para una
 sigma global, pero todavía no hay en el repositorio una tabla real con
 esos resultados.</p>
+<p>Sobre las velas diarias reales de Polygon, la IV americana se
+invirtió en 6.785 de las 7.323 filas con precio de cierre (mediana
+33,4%) y en 6.697 con VWAP (mediana 33,5%). Esas IV se calculan sobre
+precios de último trade con tasa plana y dividendos continuos, así que
+sirven como control de consistencia de los datos y no como calibración
+de la superficie.</p>
 <h1 id="detección-de-arbitrajes">7. Detección de arbitrajes</h1>
 <h2 id="detectores-model-free">Detectores model-free</h2>
 <p><code>arbitrage.py</code> implementa:</p>
@@ -488,6 +613,39 @@ en puts ITM.</li>
 <p>En la demo se conservaron 1.855 de 1.872 filas, un 99,1%. Dieciséis
 fueron excluidas por open interest insuficiente y una por volumen
 insuficiente. Nuevamente, es un resultado sintético.</p>
+<p>Con las velas diarias reales se usan los umbrales del modo diario
+(sección 4). Se conservaron 5.602 de 7.323 filas, un 76,5%. Las causas
+de exclusión, no excluyentes entre sí, fueron:</p>
+<table>
+<thead>
+<tr>
+<th>Criterio</th>
+<th style="text-align: right;">Filas excluidas</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Días al vencimiento fuera de 7 a 180</td>
+<td style="text-align: right;">1.008</td>
+</tr>
+<tr>
+<td>Sin volumen en la rueda anterior</td>
+<td style="text-align: right;">788</td>
+</tr>
+<tr>
+<td>Precio menor a USD 0,05</td>
+<td style="text-align: right;">230 con cierre, 182 con VWAP</td>
+</tr>
+<tr>
+<td>Volumen anterior desconocido</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>Spot no alineado</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
 <p>La oportunidad se reporta con la liquidez de la peor pata: volumen
 mínimo, OI mínimo y máximo spread relativo. Esto evita mostrar un
 arbitraje de tres patas como líquido sólo porque dos patas lo son.</p>
@@ -506,11 +664,892 @@ la operación completa.</p>
 <li>cierre al bid o ask según el sentido de la pata;</li>
 <li>límite de posiciones simultáneas;</li>
 <li>tamaño máximo por señal;</li>
-<li>stop-loss configurable.</li>
+<li>kill-switch por posición;</li>
+<li>control de edge residual: al ejecutar se recalcula el edge con los
+precios de ese momento, con la misma fórmula y comisión del detector, y
+la operación se descarta si quedó bajo el mínimo.</li>
 </ul>
 <p>La barrera <code>PointInTimeView</code> no permite pedir datos
 posteriores al reloj. Esto controla lookahead por construcción, no sólo
 por convención.</p>
+<h2 id="resultados-con-datos-reales-modo-diario">Resultados con datos
+reales: modo diario</h2>
+<h3 id="diseño-de-la-prueba">Diseño de la prueba</h3>
+<ul>
+<li><strong>Señal.</strong> Al cierre de la rueda t (16:00 ET), sobre el
+bid y el ask sintéticos construidos alrededor del precio de
+referencia.</li>
+<li><strong>Ejecución.</strong> A la apertura (09:30 ET) de t+1 o t+2,
+contra el bid y el ask sintéticos del <code>open</code>. Sólo se ejecuta
+si el contrato operó esa rueda y el edge recalculado con esos precios
+sigue siendo al menos USD 5. La orden se procesa antes que los cierres
+de la rueda, así que la capacidad disponible es la que había a las
+09:30.</li>
+<li><strong>Costos y límites.</strong> Comisión de USD 0,65 por
+contrato, edge mínimo de USD 5, hasta 20 posiciones simultáneas y hasta
+3 señales por rueda.</li>
+<li><strong>Salidas.</strong> Liquidación al vencimiento por valor
+intrínseco, kill-switch por pérdida no realizada, o cierre al final de
+los datos marcando al bid o al ask.</li>
+<li><strong>Grilla.</strong> Factorial de 16 configuraciones: fuente de
+precio (<code>close</code> o <code>vwap</code>) × spread supuesto (2% o
+5%) × ejecución (apertura de t+1 o de t+2) × kill-switch (USD 1.500 o
+2.000).</li>
+<li><strong>Configuración base.</strong> Cierre, 2%, t+1 y USD 2.000,
+fijada antes de correr la grilla.</li>
+</ul>
+<p><code>scripts/run_daily_grid.py</code> reproduce todos los números de
+esta sección.</p>
+<h3 id="resultados-de-las-16-configuraciones">Resultados de las 16
+configuraciones</h3>
+<table>
+<colgroup>
+<col style="width: 8%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+</colgroup>
+<thead>
+<tr>
+<th>Configuración</th>
+<th style="text-align: right;">Ops</th>
+<th style="text-align: right;">P&amp;L</th>
+<th style="text-align: right;">Hit rate</th>
+<th style="text-align: right;">Edge capt.</th>
+<th style="text-align: right;">Sharpe</th>
+<th style="text-align: right;">Máx. drawdown</th>
+<th style="text-align: right;">DSR N=16</th>
+<th style="text-align: right;">DSR N=35</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>close · 2% · t+1 · 1.500</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">USD 16.311</td>
+<td style="text-align: right;">96,7%</td>
+<td style="text-align: right;">0,96</td>
+<td style="text-align: right;">1,56</td>
+<td style="text-align: right;">USD 7.723</td>
+<td style="text-align: right;">0,71</td>
+<td style="text-align: right;">0,67</td>
+</tr>
+<tr>
+<td><strong>close · 2% · t+1 · 2.000 (base)</strong></td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">USD 19.055</td>
+<td style="text-align: right;">97,8%</td>
+<td style="text-align: right;">1,10</td>
+<td style="text-align: right;">1,69</td>
+<td style="text-align: right;">USD 7.721</td>
+<td style="text-align: right;">0,75</td>
+<td style="text-align: right;">0,71</td>
+</tr>
+<tr>
+<td>close · 2% · t+2 · 1.500</td>
+<td style="text-align: right;">88</td>
+<td style="text-align: right;">USD 20.030</td>
+<td style="text-align: right;">97,7%</td>
+<td style="text-align: right;">1,22</td>
+<td style="text-align: right;">1,79</td>
+<td style="text-align: right;">USD 5.741</td>
+<td style="text-align: right;">0,77</td>
+<td style="text-align: right;">0,74</td>
+</tr>
+<tr>
+<td>close · 2% · t+2 · 2.000</td>
+<td style="text-align: right;">88</td>
+<td style="text-align: right;">USD 20.030</td>
+<td style="text-align: right;">97,7%</td>
+<td style="text-align: right;">1,22</td>
+<td style="text-align: right;">1,79</td>
+<td style="text-align: right;">USD 5.741</td>
+<td style="text-align: right;">0,77</td>
+<td style="text-align: right;">0,74</td>
+</tr>
+<tr>
+<td>close · 5% · t+1 · 1.500</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">USD 15.342</td>
+<td style="text-align: right;">97,4%</td>
+<td style="text-align: right;">1,10</td>
+<td style="text-align: right;">1,28</td>
+<td style="text-align: right;">USD 8.834</td>
+<td style="text-align: right;">0,64</td>
+<td style="text-align: right;">0,60</td>
+</tr>
+<tr>
+<td>close · 5% · t+1 · 2.000</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">USD 19.005</td>
+<td style="text-align: right;">98,7%</td>
+<td style="text-align: right;">1,37</td>
+<td style="text-align: right;">1,50</td>
+<td style="text-align: right;">USD 8.832</td>
+<td style="text-align: right;">0,70</td>
+<td style="text-align: right;">0,66</td>
+</tr>
+<tr>
+<td>close · 5% · t+2 · 1.500</td>
+<td style="text-align: right;">52</td>
+<td style="text-align: right;">USD 13.095</td>
+<td style="text-align: right;">98,1%</td>
+<td style="text-align: right;">1,62</td>
+<td style="text-align: right;">1,48</td>
+<td style="text-align: right;">USD 5.213</td>
+<td style="text-align: right;">0,70</td>
+<td style="text-align: right;">0,66</td>
+</tr>
+<tr>
+<td>close · 5% · t+2 · 2.000</td>
+<td style="text-align: right;">52</td>
+<td style="text-align: right;">USD 13.095</td>
+<td style="text-align: right;">98,1%</td>
+<td style="text-align: right;">1,62</td>
+<td style="text-align: right;">1,48</td>
+<td style="text-align: right;">USD 5.213</td>
+<td style="text-align: right;">0,70</td>
+<td style="text-align: right;">0,66</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+1 · 1.500</td>
+<td style="text-align: right;">102</td>
+<td style="text-align: right;">USD 11.667</td>
+<td style="text-align: right;">93,1%</td>
+<td style="text-align: right;">0,46</td>
+<td style="text-align: right;">0,68</td>
+<td style="text-align: right;">USD 14.699</td>
+<td style="text-align: right;">0,47</td>
+<td style="text-align: right;">0,43</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+1 · 2.000</td>
+<td style="text-align: right;">103</td>
+<td style="text-align: right;">USD 18.186</td>
+<td style="text-align: right;">96,1%</td>
+<td style="text-align: right;">0,68</td>
+<td style="text-align: right;">0,96</td>
+<td style="text-align: right;">USD 14.619</td>
+<td style="text-align: right;">0,55</td>
+<td style="text-align: right;">0,51</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+2 · 1.500</td>
+<td style="text-align: right;">89</td>
+<td style="text-align: right;">USD 16.048</td>
+<td style="text-align: right;">98,9%</td>
+<td style="text-align: right;">0,75</td>
+<td style="text-align: right;">1,21</td>
+<td style="text-align: right;">USD 7.183</td>
+<td style="text-align: right;">0,62</td>
+<td style="text-align: right;">0,58</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+2 · 2.000</td>
+<td style="text-align: right;">89</td>
+<td style="text-align: right;">USD 16.048</td>
+<td style="text-align: right;">98,9%</td>
+<td style="text-align: right;">0,75</td>
+<td style="text-align: right;">1,21</td>
+<td style="text-align: right;">USD 7.183</td>
+<td style="text-align: right;">0,62</td>
+<td style="text-align: right;">0,58</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+1 · 1.500</td>
+<td style="text-align: right;">84</td>
+<td style="text-align: right;">USD 5.450</td>
+<td style="text-align: right;">92,9%</td>
+<td style="text-align: right;">0,26</td>
+<td style="text-align: right;">0,37</td>
+<td style="text-align: right;">USD 15.525</td>
+<td style="text-align: right;">0,39</td>
+<td style="text-align: right;">0,35</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+1 · 2.000</td>
+<td style="text-align: right;">84</td>
+<td style="text-align: right;">USD 10.522</td>
+<td style="text-align: right;">94,0%</td>
+<td style="text-align: right;">0,50</td>
+<td style="text-align: right;">0,69</td>
+<td style="text-align: right;">USD 15.095</td>
+<td style="text-align: right;">0,47</td>
+<td style="text-align: right;">0,43</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+2 · 1.500</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">USD 10.745</td>
+<td style="text-align: right;">96,3%</td>
+<td style="text-align: right;">0,69</td>
+<td style="text-align: right;">0,89</td>
+<td style="text-align: right;">USD 7.967</td>
+<td style="text-align: right;">0,53</td>
+<td style="text-align: right;">0,49</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+2 · 2.000</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">USD 10.745</td>
+<td style="text-align: right;">96,3%</td>
+<td style="text-align: right;">0,69</td>
+<td style="text-align: right;">0,89</td>
+<td style="text-align: right;">USD 7.967</td>
+<td style="text-align: right;">0,53</td>
+<td style="text-align: right;">0,49</td>
+</tr>
+</tbody>
+</table>
+<p>El Sharpe está anualizado sobre 134 ruedas. El DSR se explica en la
+sección 10.</p>
+<h3 id="embudo-de-señales-y-tipo-de-salida">Embudo de señales y tipo de
+salida</h3>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 7%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th>Configuración</th>
+<th style="text-align: right;">Detectadas</th>
+<th style="text-align: right;">Encoladas</th>
+<th style="text-align: right;">Ejecutadas</th>
+<th style="text-align: right;">Edge desaparecido</th>
+<th style="text-align: right;">Sin precio</th>
+<th style="text-align: right;">Sin capacidad</th>
+<th style="text-align: right;">Vencimiento</th>
+<th style="text-align: right;">Kill-switch</th>
+<th style="text-align: right;">Fin de datos</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>close · 2% · t+1 · 1.500</td>
+<td style="text-align: right;">2.537</td>
+<td style="text-align: right;">397</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">179</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">41</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">10</td>
+</tr>
+<tr>
+<td><strong>close · 2% · t+1 · 2.000 (base)</strong></td>
+<td style="text-align: right;">2.537</td>
+<td style="text-align: right;">397</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">179</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">41</td>
+<td style="text-align: right;">81</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">10</td>
+</tr>
+<tr>
+<td>close · 2% · t+2 · 1.500</td>
+<td style="text-align: right;">2.537</td>
+<td style="text-align: right;">397</td>
+<td style="text-align: right;">88</td>
+<td style="text-align: right;">192</td>
+<td style="text-align: right;">106</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">77</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">11</td>
+</tr>
+<tr>
+<td>close · 2% · t+2 · 2.000</td>
+<td style="text-align: right;">2.537</td>
+<td style="text-align: right;">397</td>
+<td style="text-align: right;">88</td>
+<td style="text-align: right;">192</td>
+<td style="text-align: right;">106</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">77</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">11</td>
+</tr>
+<tr>
+<td>close · 5% · t+1 · 1.500</td>
+<td style="text-align: right;">1.512</td>
+<td style="text-align: right;">348</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">183</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">72</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>close · 5% · t+1 · 2.000</td>
+<td style="text-align: right;">1.512</td>
+<td style="text-align: right;">348</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">183</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">73</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>close · 5% · t+2 · 1.500</td>
+<td style="text-align: right;">1.512</td>
+<td style="text-align: right;">348</td>
+<td style="text-align: right;">52</td>
+<td style="text-align: right;">191</td>
+<td style="text-align: right;">99</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">46</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">6</td>
+</tr>
+<tr>
+<td>close · 5% · t+2 · 2.000</td>
+<td style="text-align: right;">1.512</td>
+<td style="text-align: right;">348</td>
+<td style="text-align: right;">52</td>
+<td style="text-align: right;">191</td>
+<td style="text-align: right;">99</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">46</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">6</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+1 · 1.500</td>
+<td style="text-align: right;">3.177</td>
+<td style="text-align: right;">403</td>
+<td style="text-align: right;">102</td>
+<td style="text-align: right;">162</td>
+<td style="text-align: right;">69</td>
+<td style="text-align: right;">67</td>
+<td style="text-align: right;">85</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">12</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+1 · 2.000</td>
+<td style="text-align: right;">3.177</td>
+<td style="text-align: right;">403</td>
+<td style="text-align: right;">103</td>
+<td style="text-align: right;">166</td>
+<td style="text-align: right;">70</td>
+<td style="text-align: right;">61</td>
+<td style="text-align: right;">88</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">13</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+2 · 1.500</td>
+<td style="text-align: right;">3.177</td>
+<td style="text-align: right;">403</td>
+<td style="text-align: right;">89</td>
+<td style="text-align: right;">214</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+2 · 2.000</td>
+<td style="text-align: right;">3.177</td>
+<td style="text-align: right;">403</td>
+<td style="text-align: right;">89</td>
+<td style="text-align: right;">214</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+1 · 1.500</td>
+<td style="text-align: right;">2.116</td>
+<td style="text-align: right;">387</td>
+<td style="text-align: right;">84</td>
+<td style="text-align: right;">215</td>
+<td style="text-align: right;">63</td>
+<td style="text-align: right;">22</td>
+<td style="text-align: right;">72</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">7</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+1 · 2.000</td>
+<td style="text-align: right;">2.116</td>
+<td style="text-align: right;">387</td>
+<td style="text-align: right;">84</td>
+<td style="text-align: right;">215</td>
+<td style="text-align: right;">63</td>
+<td style="text-align: right;">22</td>
+<td style="text-align: right;">73</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+2 · 1.500</td>
+<td style="text-align: right;">2.116</td>
+<td style="text-align: right;">387</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">223</td>
+<td style="text-align: right;">71</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">75</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">5</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+2 · 2.000</td>
+<td style="text-align: right;">2.116</td>
+<td style="text-align: right;">387</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">223</td>
+<td style="text-align: right;">71</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">75</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">5</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Detectadas</strong> son todas las violaciones por encima del
+umbral. <strong>Encoladas</strong> son las que entran por el tope de
+tres por rueda.</li>
+<li>Cada encolada termina en un solo destino: ejecutada, edge
+desaparecido, sin precio (el contrato no operó en la rueda de
+ejecución), sin capacidad o pendiente al final de los datos.</li>
+<li>Entre 162 y 223 señales por configuración (40% a 58% de las
+encoladas) se descartaron porque la violación ya no existía en la
+apertura.</li>
+</ul>
+<h3 id="desglose-de-la-configuración-base">Desglose de la configuración
+base</h3>
+<p>Embudo por detector:</p>
+<table>
+<colgroup>
+<col style="width: 9%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+</colgroup>
+<thead>
+<tr>
+<th>Detector</th>
+<th style="text-align: right;">Detectadas</th>
+<th style="text-align: right;">Encoladas</th>
+<th style="text-align: right;">Ejecutadas</th>
+<th style="text-align: right;">Edge desaparecido</th>
+<th style="text-align: right;">Sin precio</th>
+<th style="text-align: right;">Sin capacidad</th>
+<th style="text-align: right;">Pendientes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>butterfly</code></td>
+<td style="text-align: right;">1.235</td>
+<td style="text-align: right;">112</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">58</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr>
+<td><code>calendar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td><code>monotonicity</code></td>
+<td style="text-align: right;">103</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td><code>put_call_parity</code></td>
+<td style="text-align: right;">981</td>
+<td style="text-align: right;">245</td>
+<td style="text-align: right;">67</td>
+<td style="text-align: right;">102</td>
+<td style="text-align: right;">44</td>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td><code>vertical_bound</code></td>
+<td style="text-align: right;">210</td>
+<td style="text-align: right;">29</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td><strong>TOTAL</strong></td>
+<td style="text-align: right;">2.537</td>
+<td style="text-align: right;">397</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">179</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">41</td>
+<td style="text-align: right;">3</td>
+</tr>
+</tbody>
+</table>
+<p>P&amp;L por detector:</p>
+<table>
+<colgroup>
+<col style="width: 9%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+</colgroup>
+<thead>
+<tr>
+<th>Detector</th>
+<th style="text-align: right;">Ops</th>
+<th style="text-align: right;">P&amp;L total</th>
+<th style="text-align: right;">P&amp;L medio</th>
+<th style="text-align: right;">Hit rate</th>
+<th style="text-align: right;">Edge anunciado</th>
+<th style="text-align: right;">Edge al ejecutar</th>
+<th style="text-align: right;">Edge capt.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>put_call_parity</code></td>
+<td style="text-align: right;">67</td>
+<td style="text-align: right;">USD 16.534</td>
+<td style="text-align: right;">USD 247</td>
+<td style="text-align: right;">99%</td>
+<td style="text-align: right;">USD 13.739</td>
+<td style="text-align: right;">USD 15.247</td>
+<td style="text-align: right;">1,20</td>
+</tr>
+<tr>
+<td><code>butterfly</code></td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">USD 1.740</td>
+<td style="text-align: right;">USD 87</td>
+<td style="text-align: right;">95%</td>
+<td style="text-align: right;">USD 3.021</td>
+<td style="text-align: right;">USD 1.080</td>
+<td style="text-align: right;">0,58</td>
+</tr>
+<tr>
+<td><code>vertical_bound</code></td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">USD 749</td>
+<td style="text-align: right;">USD 187</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">USD 314</td>
+<td style="text-align: right;">USD 477</td>
+<td style="text-align: right;">2,39</td>
+</tr>
+<tr>
+<td><code>monotonicity</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">USD 31</td>
+<td style="text-align: right;">USD 31</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">USD 206</td>
+<td style="text-align: right;">USD 31</td>
+<td style="text-align: right;">0,15</td>
+</tr>
+</tbody>
+</table>
+<p>P&amp;L por tipo de salida:</p>
+<table>
+<colgroup>
+<col style="width: 9%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+</colgroup>
+<thead>
+<tr>
+<th>Salida</th>
+<th style="text-align: right;">Ops</th>
+<th style="text-align: right;">P&amp;L total</th>
+<th style="text-align: right;">P&amp;L medio</th>
+<th style="text-align: right;">Hit rate</th>
+<th style="text-align: right;">Edge anunciado</th>
+<th style="text-align: right;">Edge al ejecutar</th>
+<th style="text-align: right;">Edge capt.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expiry</code></td>
+<td style="text-align: right;">81</td>
+<td style="text-align: right;">USD 20.779</td>
+<td style="text-align: right;">USD 257</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">USD 15.749</td>
+<td style="text-align: right;">USD 16.157</td>
+<td style="text-align: right;">1,32</td>
+</tr>
+<tr>
+<td><code>end_of_data</code></td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">USD 851</td>
+<td style="text-align: right;">USD 85</td>
+<td style="text-align: right;">90%</td>
+<td style="text-align: right;">USD 785</td>
+<td style="text-align: right;">USD 382</td>
+<td style="text-align: right;">1,09</td>
+</tr>
+<tr>
+<td><code>stop_loss</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">-USD 2.575</td>
+<td style="text-align: right;">-USD 2.575</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">USD 746</td>
+<td style="text-align: right;">USD 296</td>
+<td style="text-align: right;">-3,45</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kill-switch-frente-a-salidas-por-vencimiento">Kill-switch frente
+a salidas por vencimiento</h3>
+<p>Las dos salidas cumplen roles opuestos:</p>
+<ul>
+<li><strong>Vencimiento.</strong> Es la salida natural de una estructura
+de no arbitraje: se liquida por valor intrínseco y el payoff queda
+acotado por construcción. En las 16 configuraciones, <strong>el 100% de
+las operaciones liquidadas al vencimiento cerró con ganancia</strong>.
+Esa es la firma empírica de que las posiciones ejecutadas con edge
+residual eran estructuras de arbitraje bien armadas.</li>
+<li><strong>Kill-switch.</strong> Es una red de contención extrema y no
+una regla de toma de ganancias. Se activó entre 0 y 5 veces por
+configuración, siempre con pérdida. En la base se activó una sola vez,
+en una paridad sobre LMT abierta el 1 de mayo y cerrada el 11 de junio
+(-USD 2.575). Esa tenencia atravesó la fecha ex-dividendo de LMT del 1
+de junio (USD 3,45 por acción), justamente el caso donde el supuesto de
+dividendo continuo desplaza la cota de la paridad.</li>
+<li><strong>1.500 frente a 2.000.</strong> Con ejecución en t+2 los dos
+umbrales dan resultados idénticos. Con t+1, el umbral de USD 1.500
+cierra entre una y tres posiciones más y reduce el P&amp;L entre USD
+2.700 y 6.500. El backtest no permite saber si esas posiciones habrían
+convergido al vencimiento, así que la comparación no justifica elegir un
+umbral por su P&amp;L.</li>
+</ul>
+<h3 id="fondeo-y-dividendos-no-contabilizados">Fondeo y dividendos no
+contabilizados</h3>
+<p>El P&amp;L simulado de la paridad supera el edge al ejecutar (captura
+de 1,20 en la base). Para una conversión, cuyo payoff al vencimiento
+está fijado, eso delata costos que el backtest no cobra: los intereses
+sobre el nocional de la acción y los dividendos durante la tenencia. La
+tabla estima ese ajuste con tasa plana de 4,25% y los dividendos
+descargados de Polygon.</p>
+<table>
+<colgroup>
+<col style="width: 15%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr>
+<th>Configuración</th>
+<th style="text-align: right;">P&amp;L simulado</th>
+<th style="text-align: right;">Fondeo paridad</th>
+<th style="text-align: right;">Dividendos paridad</th>
+<th style="text-align: right;">P&amp;L ajustado estimado</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>close · 2% · t+1 · 1.500</td>
+<td style="text-align: right;">USD 16.311</td>
+<td style="text-align: right;">-USD 1.137</td>
+<td style="text-align: right;">-USD 544</td>
+<td style="text-align: right;">USD 14.630</td>
+</tr>
+<tr>
+<td><strong>close · 2% · t+1 · 2.000 (base)</strong></td>
+<td style="text-align: right;">USD 19.055</td>
+<td style="text-align: right;">-USD 922</td>
+<td style="text-align: right;">-USD 889</td>
+<td style="text-align: right;">USD 17.243</td>
+</tr>
+<tr>
+<td>close · 2% · t+2 · 1.500</td>
+<td style="text-align: right;">USD 20.030</td>
+<td style="text-align: right;">-USD 1.780</td>
+<td style="text-align: right;">-USD 345</td>
+<td style="text-align: right;">USD 17.905</td>
+</tr>
+<tr>
+<td>close · 2% · t+2 · 2.000</td>
+<td style="text-align: right;">USD 20.030</td>
+<td style="text-align: right;">-USD 1.780</td>
+<td style="text-align: right;">-USD 345</td>
+<td style="text-align: right;">USD 17.905</td>
+</tr>
+<tr>
+<td>close · 5% · t+1 · 1.500</td>
+<td style="text-align: right;">USD 15.342</td>
+<td style="text-align: right;">-USD 450</td>
+<td style="text-align: right;">-USD 418</td>
+<td style="text-align: right;">USD 14.474</td>
+</tr>
+<tr>
+<td>close · 5% · t+1 · 2.000</td>
+<td style="text-align: right;">USD 19.005</td>
+<td style="text-align: right;">-USD 456</td>
+<td style="text-align: right;">-USD 418</td>
+<td style="text-align: right;">USD 18.131</td>
+</tr>
+<tr>
+<td>close · 5% · t+2 · 1.500</td>
+<td style="text-align: right;">USD 13.095</td>
+<td style="text-align: right;">-USD 1.362</td>
+<td style="text-align: right;">USD 0</td>
+<td style="text-align: right;">USD 11.732</td>
+</tr>
+<tr>
+<td>close · 5% · t+2 · 2.000</td>
+<td style="text-align: right;">USD 13.095</td>
+<td style="text-align: right;">-USD 1.362</td>
+<td style="text-align: right;">USD 0</td>
+<td style="text-align: right;">USD 11.732</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+1 · 1.500</td>
+<td style="text-align: right;">USD 11.667</td>
+<td style="text-align: right;">-USD 2.168</td>
+<td style="text-align: right;">-USD 418</td>
+<td style="text-align: right;">USD 9.081</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+1 · 2.000</td>
+<td style="text-align: right;">USD 18.186</td>
+<td style="text-align: right;">-USD 2.024</td>
+<td style="text-align: right;">-USD 763</td>
+<td style="text-align: right;">USD 15.399</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+2 · 1.500</td>
+<td style="text-align: right;">USD 16.048</td>
+<td style="text-align: right;">-USD 2.195</td>
+<td style="text-align: right;">-USD 564</td>
+<td style="text-align: right;">USD 13.290</td>
+</tr>
+<tr>
+<td>vwap · 2% · t+2 · 2.000</td>
+<td style="text-align: right;">USD 16.048</td>
+<td style="text-align: right;">-USD 2.195</td>
+<td style="text-align: right;">-USD 564</td>
+<td style="text-align: right;">USD 13.290</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+1 · 1.500</td>
+<td style="text-align: right;">USD 5.450</td>
+<td style="text-align: right;">-USD 687</td>
+<td style="text-align: right;">-USD 418</td>
+<td style="text-align: right;">USD 4.345</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+1 · 2.000</td>
+<td style="text-align: right;">USD 10.522</td>
+<td style="text-align: right;">-USD 693</td>
+<td style="text-align: right;">-USD 418</td>
+<td style="text-align: right;">USD 9.412</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+2 · 1.500</td>
+<td style="text-align: right;">USD 10.745</td>
+<td style="text-align: right;">-USD 2.128</td>
+<td style="text-align: right;">-USD 345</td>
+<td style="text-align: right;">USD 8.272</td>
+</tr>
+<tr>
+<td>vwap · 5% · t+2 · 2.000</td>
+<td style="text-align: right;">USD 10.745</td>
+<td style="text-align: right;">-USD 2.128</td>
+<td style="text-align: right;">-USD 345</td>
+<td style="text-align: right;">USD 8.272</td>
+</tr>
+</tbody>
+</table>
+<p>La estimación infiere la dirección de cada paridad por el signo de la
+caja de entrada y no incluye el costo de tomar prestada la acción. En
+butterflies y spreads verticales una captura mayor a 1 sí es legítima:
+el edge mide el crédito en el peor escenario, y el payoff al vencimiento
+puede sumar valor intrínseco a favor.</p>
+<h3 id="lectura">Lectura</h3>
+<ol type="1">
+<li><strong>Signo positivo en todas las configuraciones.</strong> El
+P&amp;L simulado va de USD 5.450 a 20.030 y el ajustado estimado de USD
+4.345 a 18.131.</li>
+<li><strong>La paridad concentra el resultado.</strong> Es la estrategia
+con más supuestos no contabilizados (fondeo, dividendos discretos,
+préstamo de la acción), de modo que es también la parte más frágil del
+P&amp;L.</li>
+<li><strong>VWAP no mejora.</strong> Con VWAP el Sharpe cae (0,37 a 1,21
+contra 1,28 a 1,79 con cierre), el drawdown máximo casi se duplica
+(hasta USD 15.525, contra USD 8.834 con cierre), el kill-switch se
+activa más y se detectan más señales (3.177 contra 2.537 con spread 2%).
+Es coherente con la incoherencia de comparar el VWAP de la opción con el
+cierre de la acción, y no debe presentarse como mejora.</li>
+<li><strong>Más spread supuesto, menos oportunidades.</strong> Pasar del
+2% al 5% reduce las detecciones (de 2.537 a 1.512 con cierre) y las
+operaciones.</li>
+<li><strong>La latencia no tiene un efecto monótono.</strong> Con cierre
+y 2%, t+2 mejora levemente a t+1. Con 5%, t+2 opera un 32% menos. La
+composición cambia también por el tope de posiciones (41 rechazos por
+capacidad en t+1 contra 5 en t+2).</li>
+<li><strong>Ninguna configuración supera un DSR de 0,95</strong>
+(sección 10).</li>
+</ol>
 <h2 id="resultado-de-la-demo">Resultado de la demo</h2>
 <p>La demo sintética cubre una hora y tiene vencimientos varios meses
 después. Por eso las posiciones se cierran por fin de datos y no por
@@ -526,28 +1565,27 @@ vencimiento:</p>
 <tbody>
 <tr>
 <td style="text-align: right;">1 minuto</td>
-<td style="text-align: right;">9</td>
-<td style="text-align: right;">-USD 1.355</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">-USD 481</td>
 </tr>
 <tr>
 <td style="text-align: right;">5 minutos</td>
-<td style="text-align: right;">9</td>
-<td style="text-align: right;">-USD 1.355</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">-USD 481</td>
 </tr>
 <tr>
 <td style="text-align: right;">15 minutos</td>
-<td style="text-align: right;">9</td>
-<td style="text-align: right;">-USD 1.652</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">-USD 674</td>
 </tr>
 </tbody>
 </table>
-<p>Las nueve posiciones cierran por fin de datos. El resultado negativo
-es coherente con pagar el spread de entrada y salida sin llegar a la
-liquidación final, y empeora con más latencia porque la ejecución se
-hace contra quotes más alejados de la señal. En el último corte no
-quedan oportunidades por encima del umbral de USD 5: las señales
-operadas surgen en cortes anteriores, donde están las dislocaciones
-inyectadas. No es una medida de rentabilidad de la estrategia.</p>
+<p>Con el control de edge residual activo, sólo se ejecutan las tres
+señales cuyo edge sobrevive al re-cotizar. Las tres posiciones cierran
+por fin de datos. El resultado negativo es coherente con pagar el spread
+de entrada y salida sin llegar a la liquidación final, y empeora con más
+latencia porque la ejecución se hace contra quotes más alejados de la
+señal. No es una medida de rentabilidad de la estrategia.</p>
 <h1 id="in-sample-y-out-of-sample">10. In-sample y out-of-sample</h1>
 <p><code>evaluation.py</code> divide cronológicamente el dataset. Por
 defecto se puede usar 60% in-sample y 40% out-of-sample.</p>
@@ -567,20 +1605,86 @@ defecto se puede usar 60% in-sample y 40% out-of-sample.</p>
 ganadora. Luego se calcula el Sharpe deflactado por la cantidad de
 pruebas, para reducir el riesgo de presentar como descubrimiento un
 máximo producido por data snooping.</p>
-<h2 id="pendiente-de-resultados">Pendiente de resultados</h2>
-<p>Todavía falta ejecutar y documentar una búsqueda real con:</p>
+<h2 id="sharpe-deflactado-sobre-la-grilla-diaria">Sharpe deflactado
+sobre la grilla diaria</h2>
+<h3 id="espacio-de-búsqueda">Espacio de búsqueda</h3>
+<p>La grilla de la sección 9 es un diseño factorial de cuatro factores
+con dos niveles cada uno: fuente de precio (cierre o VWAP), spread
+supuesto (2% o 5%), latencia (apertura de t+1 o de t+2) y tolerancia del
+kill-switch (USD 1.500 o 2.000). Son N = 16 configuraciones. Se
+evaluaron y reportaron todas, no sólo la mejor, y la configuración base
+se fijó antes de correrla.</p>
+<p>El Sharpe deflactado (Bailey y López de Prado, 2014) compara el
+Sharpe observado contra el máximo que se esperaría obtener por azar al
+probar N configuraciones sin poder predictivo:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="double-struck">𝔼</mi><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">max</mi><mo>&#8289;</mo></mrow><mover><mrow><mi>S</mi><mi>R</mi></mrow><mo accent="true">̂</mo></mover><mo stretchy="false" form="postfix">]</mo><mo>≈</mo><msqrt><mi>V</mi></msqrt><mrow><mo stretchy="true" form="prefix">[</mo><mo stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>γ</mi><mo stretchy="false" form="postfix">)</mo><mspace width="0.167em"></mspace><msup><mi mathvariant="normal">Φ</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mstyle displaystyle="false"><mfrac><mn>1</mn><mi>N</mi></mfrac></mstyle><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><mi>γ</mi><mspace width="0.167em"></mspace><msup><mi mathvariant="normal">Φ</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mstyle displaystyle="false"><mfrac><mn>1</mn><mrow><mi>N</mi><mi>e</mi></mrow></mfrac></mstyle><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">\mathbb{E}[\max \widehat{SR}] \approx \sqrt{V}\left[(1-\gamma)\,\Phi^{-1}\!\left(1-\tfrac{1}{N}\right)+\gamma\,\Phi^{-1}\!\left(1-\tfrac{1}{Ne}\right)\right],</annotation></semantics></math></p>
+<p>donde
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math>
+es la varianza de los Sharpe entre configuraciones (0,00074 en Sharpe
+por rueda) y
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math>
+la constante de Euler-Mascheroni. Luego se calcula la probabilidad de
+que el Sharpe verdadero supere ese umbral, corrigiendo por asimetría y
+curtosis de los retornos diarios. Un DSR menor a 0,95 indica que el
+resultado no se distingue de lo que produciría la búsqueda sobre
+ruido.</p>
+<h3 id="declaración-de-la-búsqueda-previa">Declaración de la búsqueda
+previa</h3>
+<p>El espacio factorial no fue el único explorado. Antes de la grilla
+definitiva se evaluaron:</p>
 <ul>
-<li>grilla concreta;</li>
-<li>mejor configuración in-sample;</li>
-<li>desempeño out-of-sample;</li>
-<li>curva de equity;</li>
-<li>drawdown;</li>
-<li>hit rate;</li>
-<li>edge capture;</li>
-<li>Sharpe y DSR.</li>
+<li>tres corridas sin control de edge residual;</li>
+<li>una grilla de 16 configuraciones con ejecución al cierre y stop-loss
+de USD 500 o desactivado.</li>
 </ul>
-<p>La infraestructura existe, pero la evidencia empírica todavía no está
-generada.</p>
+<p>La ejecución a la apertura, los niveles del kill-switch y la decisión
+de ampliar el stop se tomaron después de observar esos resultados. Por
+eso el DSR se reporta con dos valores de N:</p>
+<ul>
+<li><strong>N = 16:</strong> la grilla factorial definitiva.</li>
+<li><strong>N = 35:</strong> todas las configuraciones evaluadas en el
+proyecto (3 + 16 + 16). Es el valor más honesto para juzgar el
+resultado.</li>
+</ul>
+<h3 id="resultados">Resultados</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align: right;">DSR N=16</th>
+<th style="text-align: right;">DSR N=35</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Configuración base (cierre · 2% · t+1 · USD 2.000)</td>
+<td style="text-align: right;">0,75</td>
+<td style="text-align: right;">0,71</td>
+</tr>
+<tr>
+<td>Mejor configuración (cierre · 2% · t+2)</td>
+<td style="text-align: right;">0,77</td>
+<td style="text-align: right;">0,74</td>
+</tr>
+<tr>
+<td>Peor configuración (VWAP · 5% · t+1 · USD 1.500)</td>
+<td style="text-align: right;">0,39</td>
+<td style="text-align: right;">0,35</td>
+</tr>
+</tbody>
+</table>
+<p>Ninguna configuración alcanza 0,95, ni siquiera con N = 16. Con 134
+ruedas, un Sharpe anualizado de 1,69 no alcanza para distinguir la
+estrategia de un máximo producido por la búsqueda. El P&amp;L positivo y
+el 100% de acierto al vencimiento son consistentes con arbitrajes
+reales, pero la evidencia estadística es insuficiente para
+afirmarlo.</p>
+<h3 id="pendiente-split-temporal">Pendiente: split temporal</h3>
+<p>Todavía falta el split in-sample / out-of-sample con datos reales.
+<code>split_in_sample()</code> y <code>grid_search()</code> ya lo
+soportan, pero con seis meses y vencimientos mensuales, un corte 60/40
+deja muy pocos vencimientos en cada tramo. Conviene hacerlo cuando haya
+al menos un año de historia descargada.</p>
 <h1 id="paper-trading">11. Paper trading</h1>
 <p>Esta parte no está implementada. El proyecto puede consultar
 contratos mediante <code>TradingClient</code>, pero no envía
@@ -602,9 +1706,20 @@ pata.</p>
 <code>ALPACA_PAPER=true</code> y con tamaños mínimos durante la etapa de
 validación.</p>
 <h1 id="monitoreo-y-stop-loss">12. Monitoreo y stop-loss</h1>
-<p>El stop-loss actual sólo existe dentro del backtest. Por defecto se
-configura como una pérdida no realizada de USD 500 por posición, pero no
-está conectado a una cuenta ni a un proceso en vivo.</p>
+<p>El stop-loss actual sólo existe dentro del backtest, donde funciona
+como <strong>kill-switch de cola</strong>: cierra una posición cuando su
+pérdida no realizada supera un umbral. No está conectado a una cuenta ni
+a un proceso en vivo.</p>
+<p>La calibración surge del propio backtest. Un umbral estrecho (USD
+500) resultó incompatible con estrategias de convergencia al vencimiento
+marcadas con cierres diarios asincrónicos: el ruido del marcado
+disparaba el stop y cristalizaba pérdidas en posiciones que al
+vencimiento habrían convergido. Por eso el kill-switch se fija como red
+de contención extrema, en USD 1.500 y 2.000 por posición,
+aproximadamente el 4% y el 5% del nocional medio de una conversión. El
+nivel se deriva del tamaño de la exposición y no de maximizar el
+P&amp;L, pero la decisión de ampliarlo se tomó después de observar el
+resultado con USD 500, y así se declara en la sección 10.</p>
 <p>El sistema de producción debería tener estos componentes:</p>
 <pre class="text"><code>Snapshot de mercado
   -&gt; detector
@@ -658,28 +1773,34 @@ falta</h1>
 </tr>
 <tr>
 <td>Obtención de datos</td>
-<td>Código para Alpaca, pero conexión real no probada.</td>
+<td>Código para Alpaca sin probar contra la API real. Descarga diaria de
+Polygon ejecutada con datos reales (365 contratos, 7.323 velas).</td>
 </tr>
 <tr>
 <td>Limpieza y calidad</td>
-<td>Implementada y testeada.</td>
+<td>Implementada y testeada; modo diario aplicado sobre datos
+reales.</td>
 </tr>
 <tr>
 <td>Calibración binomial</td>
-<td>Implementada y testeada sobre datos sintéticos.</td>
+<td>Implementada y testeada; IV americana invertida sobre velas
+reales.</td>
 </tr>
 <tr>
 <td>Detección de arbitrajes</td>
-<td>Implementada y testeada.</td>
+<td>Implementada y testeada; aplicada sobre datos reales con bid/ask
+sintético.</td>
 </tr>
 <tr>
 <td>Backtest realista</td>
-<td>Implementado con costos, latencia y barrera anti-lookahead.</td>
+<td>Implementado con costos, ejecución a la apertura, control de edge
+residual, kill-switch y barrera anti-lookahead. Grilla de 16
+configuraciones ejecutada sobre datos reales.</td>
 </tr>
 <tr>
 <td>In-sample / out-of-sample</td>
-<td>Infraestructura implementada; faltan resultados reales
-documentados.</td>
+<td>Sharpe deflactado calculado sobre la grilla; falta el split temporal
+con datos reales.</td>
 </tr>
 <tr>
 <td>Paper trading</td>
@@ -691,16 +1812,60 @@ documentados.</td>
 </tr>
 <tr>
 <td>Stop-loss productivo</td>
-<td>Sólo existe en el backtest.</td>
+<td>Kill-switch calibrado sólo dentro del backtest.</td>
 </tr>
 <tr>
 <td>P&amp;L acumulado real</td>
-<td>No disponible.</td>
+<td>No disponible: el P&amp;L del backtest es simulado.</td>
 </tr>
 </tbody>
 </table>
 <h1 id="limitaciones-técnicas">14. Limitaciones técnicas</h1>
-<p>Las limitaciones deben declararse en la presentación:</p>
+<p>Las limitaciones deben declararse en la presentación.</p>
+<h2 id="limitaciones-del-backtest-diario">Limitaciones del backtest
+diario</h2>
+<ul>
+<li><strong>Costo de fondeo en conversiones.</strong> El backtest no
+cobra intereses sobre el nocional de la acción comprada en una
+conversión ni acredita intereses sobre la venta en corto de una
+conversión reversa. Tampoco acredita o debita los dividendos con fecha
+ex durante la tenencia, ni el costo de tomar prestada la acción. El
+detector sí descuenta el strike
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msup><mi>e</mi><mrow><mi>−</mi><mi>r</mi><mi>τ</mi></mrow></msup></mrow><annotation encoding="application/x-tex">Ke^{-r\tau}</annotation></semantics></math>)
+al evaluar la oportunidad, así que el P&amp;L simulado de la paridad
+supera al edge que la originó. La sección 9 cuantifica el ajuste
+estimado.</li>
+<li><strong>Dividendos continuos.</strong> La paridad usa un yield
+continuo. RTX y LMT pagan dividendos en fechas discretas (RTX: 22 de
+mayo y 14 de agosto; LMT: 2 de marzo, 1 de junio y 1 de septiembre de
+2026), lo que desplaza la cota inferior cerca de esas fechas y puede
+generar conversiones reversas espurias.</li>
+<li><strong>Asincronía de cierres.</strong> El cierre y la apertura de
+cada contrato son el precio de su primer o último trade, que ocurre a
+horas distintas en contratos distintos y en la acción. Comparar esos
+precios genera violaciones aparentes de no arbitraje. El control de edge
+residual exige que la violación persista en la apertura siguiente, lo
+que mitiga pero no elimina el sesgo.</li>
+<li><strong>VWAP no coherente con el spot.</strong> Con
+<code>vwap</code>, la opción usa el precio medio de la rueda, pero el
+spot sigue siendo el cierre de la acción. En la paridad eso mezcla
+precios de momentos distintos.</li>
+<li><strong>Spreads sintéticos.</strong> El bid y el ask no se observan:
+se suponen al 2% o al 5% del precio. El edge y el P&amp;L dependen de
+ese supuesto, y por eso la grilla lo varía.</li>
+<li><strong>Sin profundidad ni open interest.</strong> No se limita el
+tamaño por la profundidad del libro y Polygon no publica open interest
+histórico.</li>
+<li><strong>Tope de posiciones y señales repetidas.</strong> El límite
+de 20 posiciones simultáneas rechaza señales y condiciona el P&amp;L; la
+misma estructura puede reabrirse en ruedas sucesivas.</li>
+<li><strong>Asignación anticipada.</strong> No se modela el ejercicio
+anticipado de las patas vendidas, que en opciones americanas con
+dividendos es el riesgo central de estas estructuras.</li>
+<li><strong>Selección del universo.</strong> Los strikes listados
+después del inicio de cada ventana no se descargan.</li>
+</ul>
+<h2 id="limitaciones-generales">Limitaciones generales</h2>
 <ul>
 <li>no hay bid/ask histórico completo de opciones en Alpaca;</li>
 <li>el feed gratuito está demorado;</li>
@@ -736,14 +1901,34 @@ europeo para las opciones analizadas.</li>
 <li>Las relaciones model-free son la evidencia más fuerte porque no
 dependen de una sigma correcta.</li>
 <li>El bid-ask, la latencia y la liquidez pueden eliminar completamente
-el edge teórico.</li>
+el edge teórico. Con datos reales, entre el 40% y el 58% de las señales
+encoladas ya no existían en la apertura siguiente.</li>
 <li>El control temporal de los datos es tan importante como la fórmula
-de valuación.</li>
+de valuación: ejecutar sin verificar el edge residual convertía el
+backtest en una medición de señales vencidas.</li>
 <li>La ausencia de NBBO histórico limita fuertemente cualquier backtest
-retrospectivo.</li>
+retrospectivo: con el plan gratuito de Polygon el bid y el ask deben
+suponerse.</li>
+<li>Con velas diarias reales y edge residual verificado, las 16
+configuraciones dan P&amp;L simulado positivo y el 100% de las
+posiciones liquidadas al vencimiento gana. Es la firma de estructuras de
+no arbitraje bien ejecutadas.</li>
+<li>Un stop-loss estrecho es incompatible con estrategias de
+convergencia marcadas con precios asincrónicos. El kill-switch debe
+calibrarse como red de contención de cola, y aun así se activa en las
+posiciones más expuestas a los supuestos del modelo, como dividendos
+discretos.</li>
+<li>La paridad put-call aporta cerca del 87% del P&amp;L y es también la
+estrategia más afectada por costos no contabilizados. El ajuste estimado
+por fondeo y dividendos reduce el P&amp;L de la base de USD 19.055 a
+17.243.</li>
+<li>Ninguna configuración alcanza un Sharpe deflactado de 0,95 (0,75 en
+la base con N = 16, 0,71 con N = 35): la evidencia no alcanza para
+afirmar que la estrategia es rentable fuera de muestra.</li>
 <li>La demo verifica la cañería, pero no prueba rentabilidad.</li>
-<li>Antes de presentar P&amp;L real hay que grabar datos propios,
-ejecutar paper trading y monitorear fills.</li>
+<li>Antes de presentar P&amp;L real hay que contabilizar fondeo y
+dividendos, grabar cotizaciones propias, ejecutar paper trading y
+monitorear fills.</li>
 </ol>
 <p>La conclusión general para la exposición puede formularse así:</p>
 <blockquote>
@@ -757,29 +1942,45 @@ resultado que sobreviva fuera de muestra.</p>
 presentación</h1>
 <ol type="1">
 <li>Presentar el objetivo y el flujo general del pipeline.</li>
-<li>Explicar la limitación de datos de Alpaca y la diferencia entre
-snapshot real y barra con spread proxy.</li>
+<li>Explicar la limitación de datos: Alpaca no tiene NBBO histórico y el
+plan gratuito de Polygon sólo da velas diarias a 5 requests por
+minuto.</li>
+<li>Mostrar la arquitectura del modo diario: descarga acotada, sellado
+al cierre, bid/ask sintético y filtro por volumen de la rueda anterior
+(365 contratos, 7.323 velas, 76,5% operables).</li>
 <li>Mostrar el control anti-lookahead y el esquema de calidad.</li>
 <li>Introducir el árbol CRR y comparar IV americana contra europea.</li>
-<li>Mostrar la superficie de volatilidad y el RMSE real cuando se genere
-con datos de mercado.</li>
-<li>Explicar los cinco detectores model-free y el detector contra
-modelo.</li>
-<li>Mostrar el reporte de filtros de liquidez.</li>
-<li>Explicar la latencia, costos y barrera <code>PointInTimeView</code>
-del backtest.</li>
-<li>Mostrar la tabla in-sample / out-of-sample y el DSR cuando se
-ejecute sobre datos reales.</li>
-<li>Presentar órdenes paper, fills y P&amp;L sólo después de implementar
-esa capa.</li>
-<li>Cerrar con el diseño del monitor, stop-loss y limitaciones.</li>
+<li>Explicar los cinco detectores model-free, el detector contra modelo
+y las correcciones al notebook de cátedra.</li>
+<li>Explicar el backtest: señal al cierre, ejecución a la apertura,
+control de edge residual y barrera <code>PointInTimeView</code>.</li>
+<li>Mostrar la tabla de las 16 configuraciones y el embudo de señales:
+cuántas violaciones desaparecen antes de poder ejecutarse.</li>
+<li>Mostrar el desglose por tipo de salida: 100% de acierto al
+vencimiento frente al rol del kill-switch.</li>
+<li>Mostrar el desglose por detector y el ajuste por fondeo y dividendos
+de la paridad.</li>
+<li>Presentar el Sharpe deflactado con N = 16 y N = 35, declarando la
+búsqueda previa.</li>
+<li>Cerrar con limitaciones (spreads sintéticos, asincronía, fondeo,
+dividendos discretos) y próximos pasos: contabilidad del fondeo,
+cotizaciones propias, paper trading y monitoreo.</li>
 </ol>
 <h2 id="estado-reproducible-al-preparar-este-informe">Estado
 reproducible al preparar este informe</h2>
-<p>La suite ejecutada con Python 3.14.3 el 13 de septiembre de 2026
-produjo 40 tests exitosos. El demo offline recorrió generación sintética
+<p>La suite ejecutada con Python 3.14.3 el 14 de septiembre de 2026
+produjo 59 tests exitosos. El demo offline recorrió generación sintética
 calibrada, alineación, IV, filtros, Parquet, detección y backtest. La
-capa de red no se ejecutó porque no estaban configuradas las
-credenciales de Alpaca.</p>
+capa de Alpaca no se ejecutó porque no estaban configuradas sus
+credenciales.</p>
+<p>Los resultados empíricos de las secciones 9 y 10 se reproducen
+con:</p>
+<pre class="text"><code>python scripts/download_polygon.py --start 2026-03-01 --end 2026-09-12 --max-strikes-per-side 4
+python scripts/run_daily_grid.py --out reportes_final</code></pre>
+<p><code>reportes_final/</code> contiene <code>summary.csv</code> con
+las 16 configuraciones y el DSR, <code>data_summary.json</code> con la
+descripción del dataset, y por cada configuración las operaciones, la
+curva de equity, el embudo de señales y los desgloses por detector y por
+motivo de salida.</p>
 </body>
 </html>

@@ -1,0 +1,7 @@
+detector,detectadas,encoladas,ejecutadas,edge_desaparecido,sin_precio,sin_capacidad,pendientes_al_final
+butterfly,1482,49,10,19,14,5,1
+calendar,7,0,0,0,0,0,0
+monotonicity,65,0,0,0,0,0,0
+put_call_parity,1465,339,90,138,49,60,2
+vertical_bound,158,15,2,5,6,2,0
+TOTAL,3177,403,102,162,69,67,3

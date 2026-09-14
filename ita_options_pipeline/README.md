@@ -21,7 +21,7 @@ ita_options/
 ├── demo.py         Mercado sintético + corrida offline del pipeline completo
 ├── doctor.py       Diagnóstico de conectividad y datos disponibles
 └── pipeline.py     Orquestador + CLI
-tests/                         58 tests, incluidos tests de contrato contra el SDK real
+tests/                         59 tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
 informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
@@ -58,7 +58,7 @@ ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 58 tests, sin red ni credenciales
+pytest                              # 59 tests, sin red ni credenciales
 python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
 
@@ -130,8 +130,16 @@ entre backtests; `--report-dir` acumula una fila por configuración en
 foreach ($s in 0.02, 0.05) {
   python -m ita_options.pipeline --tickers RTX BA LMT enrich-daily --assumed-spread $s
   python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --report-dir reportes
-  python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --stop-loss 0 --report-dir reportes
+  python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --stop-loss 2000 --report-dir reportes
 }
+```
+
+La grilla factorial usada en el informe (fuente × spread × latencia ×
+kill-switch = 16 configuraciones, con Sharpe deflactado y estimación del fondeo
+no contabilizado en la paridad) se reproduce con un solo comando:
+
+```powershell
+python scripts/run_daily_grid.py --out reportes_final
 ```
 
 - **Descarga.** Una vela diaria por contrato para toda su ventana en un solo
@@ -144,9 +152,10 @@ foreach ($s in 0.02, 0.05) {
   con un spread supuesto y quedan con `spread_is_proxy=True`.
 - **Liquidez.** `LiquidityThresholds.for_daily_bars()` filtra por el volumen de
   la rueda anterior (`volume_prev_day`), sin spread ni open interest.
-- **Backtest.** La señal sale del cierre de `t` y se ejecuta, como mínimo, al
-  cierre de la rueda siguiente. Al ejecutar se recalcula el edge con esos
-  precios y la operación se descarta si quedó bajo `--min-edge`
+- **Backtest.** La señal sale del cierre de `t` y la orden se llena, como
+  mínimo, en la **apertura** de la rueda siguiente, contra un bid/ask sintético
+  construido sobre el `open` (`--execute-at close` ejecuta al cierre). Al
+  ejecutar se recalcula el edge con esos precios y la operación se descarta si quedó bajo `--min-edge`
   (`--no-edge-check` reproduce el comportamiento anterior, que ejecutaba igual).
 - **Diagnósticos.** Cada corrida imprime el embudo de señales por detector
   (detectadas, encoladas, ejecutadas, rechazadas por edge desaparecido, sin
@@ -333,7 +342,7 @@ anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte
 pytest
 ```
 
-58 tests, sin red ni credenciales. La estrategia es generar los precios con el
+59 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
 

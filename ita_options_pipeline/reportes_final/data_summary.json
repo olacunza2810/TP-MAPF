@@ -1,0 +1,123 @@
+{
+  "close_spread0.02": {
+    "filas": 7323,
+    "contratos": 365,
+    "filas_por_subyacente": {
+      "BA": 3121,
+      "RTX": 2425,
+      "LMT": 1777
+    },
+    "desde": "2026-03-02",
+    "hasta": "2026-09-11",
+    "operables": 5602,
+    "supervivencia": 0.7649870271746552,
+    "iv_invertidas": 6785,
+    "iv_mediana": 0.333627771538963,
+    "exclusiones": {
+      "volumen_rueda_anterior_insuficiente": 788,
+      "volumen_rueda_anterior_desconocido": 0,
+      "precio_invalido": 0,
+      "mid_por_debajo_del_minimo": 230,
+      "dte_fuera_de_rango": 1008,
+      "spot_no_alineado": 0
+    }
+  },
+  "close_spread0.05": {
+    "filas": 7323,
+    "contratos": 365,
+    "filas_por_subyacente": {
+      "BA": 3121,
+      "RTX": 2425,
+      "LMT": 1777
+    },
+    "desde": "2026-03-02",
+    "hasta": "2026-09-11",
+    "operables": 5602,
+    "supervivencia": 0.7649870271746552,
+    "iv_invertidas": 6785,
+    "iv_mediana": 0.333627771538963,
+    "exclusiones": {
+      "volumen_rueda_anterior_insuficiente": 788,
+      "volumen_rueda_anterior_desconocido": 0,
+      "precio_invalido": 0,
+      "mid_por_debajo_del_minimo": 230,
+      "dte_fuera_de_rango": 1008,
+      "spot_no_alineado": 0
+    }
+  },
+  "vwap_spread0.02": {
+    "filas": 7323,
+    "contratos": 365,
+    "filas_por_subyacente": {
+      "BA": 3121,
+      "RTX": 2425,
+      "LMT": 1777
+    },
+    "desde": "2026-03-02",
+    "hasta": "2026-09-11",
+    "operables": 5602,
+    "supervivencia": 0.7649870271746552,
+    "iv_invertidas": 6697,
+    "iv_mediana": 0.33480496959154943,
+    "exclusiones": {
+      "volumen_rueda_anterior_insuficiente": 788,
+      "volumen_rueda_anterior_desconocido": 0,
+      "precio_invalido": 0,
+      "mid_por_debajo_del_minimo": 182,
+      "dte_fuera_de_rango": 1008,
+      "spot_no_alineado": 0
+    }
+  },
+  "vwap_spread0.05": {
+    "filas": 7323,
+    "contratos": 365,
+    "filas_por_subyacente": {
+      "BA": 3121,
+      "RTX": 2425,
+      "LMT": 1777
+    },
+    "desde": "2026-03-02",
+    "hasta": "2026-09-11",
+    "operables": 5602,
+    "supervivencia": 0.7649870271746552,
+    "iv_invertidas": 6697,
+    "iv_mediana": 0.33480496959154943,
+    "exclusiones": {
+      "volumen_rueda_anterior_insuficiente": 788,
+      "volumen_rueda_anterior_desconocido": 0,
+      "precio_invalido": 0,
+      "mid_por_debajo_del_minimo": 182,
+      "dte_fuera_de_rango": 1008,
+      "spot_no_alineado": 0
+    }
+  },
+  "grid": {
+    "factores": {
+      "price_source": [
+        "close",
+        "vwap"
+      ],
+      "assumed_spread": [
+        0.02,
+        0.05
+      ],
+      "lag_sessions": [
+        1,
+        2
+      ],
+      "kill_switch_usd": [
+        1500.0,
+        2000.0
+      ]
+    },
+    "base": {
+      "price_source": "close",
+      "assumed_spread": 0.02,
+      "lag_sessions": 1,
+      "kill_switch_usd": 2000.0
+    },
+    "min_edge_usd": 5.0,
+    "trials_total": 35,
+    "sharpe_period_variance": 0.0007364285925340922
+  }
+}

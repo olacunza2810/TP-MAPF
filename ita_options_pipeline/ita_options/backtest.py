@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Literal, Sequence
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -52,6 +52,13 @@ def _expiry_instant(expiration: Any) -> pd.Timestamp:
     if stamp.tz is not None:
         stamp = stamp.tz_convert(_NY).tz_localize(None)
     return (stamp.normalize() + pd.Timedelta(hours=16)).tz_localize(_NY).tz_convert("UTC")
+
+
+def _session_open(stamp: pd.Timestamp) -> pd.Timestamp:
+    """Apertura (09:30 de Nueva York) de la rueda que contiene ``stamp``, en UTC."""
+    local = pd.Timestamp(stamp).tz_convert(_NY)
+    opening = local.tz_localize(None).normalize() + pd.Timedelta(hours=9, minutes=30)
+    return opening.tz_localize(_NY).tz_convert("UTC")
 
 __all__ = [
     "PointInTimeView",
@@ -144,6 +151,29 @@ class PointInTimeView:
         ]
         return None if visible.empty else visible.iloc[-1]
 
+    def quote_now(self, symbol: str) -> pd.Series | None:
+        """Fila del contrato sellada exactamente en el reloj actual.
+
+        A diferencia de :meth:`last_quote`, no arrastra una fila vieja: si el
+        contrato no tiene dato en este instante devuelve ``None``. Es lo que
+        necesita la ejecución a la apertura, que sólo es válida si el contrato
+        operó en esa rueda.
+        """
+        rows = self._quotes.loc[
+            (self._quotes["symbol"] == symbol) & (self._quotes["timestamp"] == self.now)
+        ]
+        return None if rows.empty else rows.iloc[-1]
+
+    def underlying_field(self, underlying: str, column: str) -> float:
+        """Columna de la barra del subyacente sellada en el reloj actual, o ``NaN``."""
+        rows = self._underlying.loc[
+            (self._underlying["symbol"] == underlying)
+            & (self._underlying["timestamp"] == self.now)
+        ]
+        if rows.empty or column not in rows.columns:
+            return float("nan")
+        return float(rows.iloc[-1][column])
+
     def spot(self, underlying: str, timestamp: pd.Timestamp | None = None) -> float:
         """Último precio conocido del subyacente, no posterior al reloj."""
         target = timestamp if timestamp is not None else self.now
@@ -204,6 +234,11 @@ class StrategyParams:
             comportamiento anterior: se ejecuta aunque el edge haya desaparecido.
         min_edge_at_execution: Umbral en USD por contrato para ese control.
             ``None`` usa ``min_net_edge``.
+        execution_price: ``quote`` ejecuta contra el bid/ask del corte en que
+            vence el retardo. ``open`` (sólo para velas diarias) ejecuta contra
+            ``bid_open``/``ask_open`` de esa rueda, es decir, en la apertura: la
+            orden se llena a las 09:30 y la posición ya queda sujeta al
+            vencimiento y al stop-loss del cierre de la misma rueda.
     """
 
     min_net_edge: float = 5.0
@@ -219,6 +254,7 @@ class StrategyParams:
     contracts_per_trade: float = 1.0
     require_edge_at_execution: bool = True
     min_edge_at_execution: float | None = None
+    execution_price: Literal["quote", "open"] = "quote"
 
     def as_dict(self) -> dict[str, Any]:
         """Serializa los hiperparámetros para el registro de la corrida."""
@@ -236,6 +272,7 @@ class StrategyParams:
             "contracts_per_trade": self.contracts_per_trade,
             "require_edge_at_execution": self.require_edge_at_execution,
             "min_edge_at_execution": self.min_edge_at_execution,
+            "execution_price": self.execution_price,
         }
 
 
@@ -454,21 +491,31 @@ class ArbitrageBacktester:
         if not legs:
             return None, "no_quote"
 
+        at_open = params.execution_price == "open"
         cash = 0.0
         signal_cash = 0.0
         refreshed: list[dict[str, Any]] = []
         for leg in legs:
             if leg["kind"] == "stock":
-                spot = view.spot(str(leg["symbol"]))
+                spot = (
+                    view.underlying_field(str(leg["symbol"]), "open")
+                    if at_open
+                    else view.spot(str(leg["symbol"]))
+                )
                 if not np.isfinite(spot):
                     return None, "no_quote"
                 fill = spot
             else:
-                quote = view.last_quote(str(leg["symbol"]))
+                # A la apertura sólo vale la vela de esta rueda: arrastrar la
+                # de una rueda anterior sería ejecutar a un precio que ya no
+                # existía cuando se envió la orden.
+                symbol = str(leg["symbol"])
+                quote = view.quote_now(symbol) if at_open else view.last_quote(symbol)
                 if quote is None:
                     return None, "no_quote"
                 side = "ask" if leg["qty"] > 0 else "bid"
-                fill = float(quote[side])
+                column = f"{side}_open" if at_open else side
+                fill = float(quote[column]) if column in quote.index else float("nan")
                 if not np.isfinite(fill) or fill <= 0:
                     return None, "no_quote"
             cash -= leg["qty"] * fill * self._costs.multiplier
@@ -500,7 +547,7 @@ class ArbitrageBacktester:
             detector=str(signal["detector"]),
             underlying=str(signal["underlying"]),
             legs=tuple(refreshed),
-            opened_at=view.now,
+            opened_at=_session_open(view.now) if at_open else view.now,
             entry_cash=cash * params.contracts_per_trade,
             entry_commission=commission,
             predicted_edge=float(signal["net_edge_usd"]) * params.contracts_per_trade,
@@ -582,8 +629,40 @@ class ArbitrageBacktester:
             stock_borrow_rate=self._costs.stock_borrow_rate,
         )
 
+        if params.execution_price not in ("quote", "open"):
+            raise ValueError(f"execution_price desconocido: {params.execution_price}")
+        at_open = params.execution_price == "open"
+
+        def execute_ready(stamp: pd.Timestamp) -> None:
+            """Ejecuta las señales cuyo retardo ya venció.
+
+            En modo ``open`` corre antes de cerrar posiciones: la orden se llena
+            en la apertura, así que la capacidad disponible es la que había a
+            esa hora, y la posición nueva ya queda sujeta al vencimiento y al
+            stop-loss del cierre de la misma rueda.
+            """
+            nonlocal pending, next_id, open_positions
+            ready = [item for item in pending if stamp >= item[0]]
+            pending = [item for item in pending if stamp < item[0]]
+            for index, (_, signal_at, signal) in enumerate(ready):
+                if len(open_positions) >= params.max_concurrent_positions:
+                    for _, _, skipped in ready[index:]:
+                        bump(str(skipped["detector"]), "rejected_capacity")
+                    break
+                position, outcome = self._execute(
+                    signal, view, params, next_id, signal_at
+                )
+                if position is None:
+                    bump(str(signal["detector"]), f"rejected_{outcome}")
+                    continue
+                open_positions.append(position)
+                bump(position.detector, "filled")
+                next_id += 1
+
         for stamp in stamps:
             view.advance_to(stamp)
+            if at_open:
+                execute_ready(stamp)
 
             # 1. Cerrar lo que corresponda.
             still_open: list[Position] = []
@@ -606,23 +685,9 @@ class ArbitrageBacktester:
                 still_open.append(position)
             open_positions = still_open
 
-            # 2. Ejecutar señales cuyo retardo ya venció.
-            ready = [item for item in pending if stamp >= item[0]]
-            pending = [item for item in pending if stamp < item[0]]
-            for index, (_, signal_at, signal) in enumerate(ready):
-                if len(open_positions) >= params.max_concurrent_positions:
-                    for _, _, skipped in ready[index:]:
-                        bump(str(skipped["detector"]), "rejected_capacity")
-                    break
-                position, outcome = self._execute(
-                    signal, view, params, next_id, signal_at
-                )
-                if position is None:
-                    bump(str(signal["detector"]), f"rejected_{outcome}")
-                    continue
-                open_positions.append(position)
-                bump(position.detector, "filled")
-                next_id += 1
+            # 2. Ejecutar señales cuyo retardo ya venció (en modo open ya se hizo).
+            if not at_open:
+                execute_ready(stamp)
 
             # 3. Generar señales nuevas sobre la cadena visible.
             chain = view.chain_at()
