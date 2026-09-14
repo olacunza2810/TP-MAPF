@@ -21,7 +21,7 @@ ita_options/
 ├── demo.py         Mercado sintético + corrida offline del pipeline completo
 ├── doctor.py       Diagnóstico de conectividad y datos disponibles
 └── pipeline.py     Orquestador + CLI
-tests/                         48 tests, incluidos tests de contrato contra el SDK real
+tests/                         49 tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
 informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
@@ -58,7 +58,7 @@ ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
 ita-options backfill --start 2025-09-01 --end 2026-09-01
 ita-options enrich --start 2026-09-01
 
-pytest                              # 48 tests, sin red ni credenciales
+pytest                              # 49 tests, sin red ni credenciales
 python validate_sample.py           # valida la muestra sintética y guarda la figura
 ```
 
@@ -315,7 +315,7 @@ anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte
 pytest
 ```
 
-48 tests, sin red ni credenciales. La estrategia es generar los precios con el
+49 tests, sin red ni credenciales. La estrategia es generar los precios con el
 mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
 generada por el modelo, el falso positivo es del detector.
 
