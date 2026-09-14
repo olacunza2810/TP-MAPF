@@ -74,6 +74,7 @@ class CycleReport:
     daily_pnl: float = 0.0
     reconciliation_diffs: int = 0
     halted: str | None = None
+    exclusions: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
 
@@ -191,8 +192,13 @@ class LiveRunner:
                 self.ledger.event("universe", {"contracts": len(self._master)})
             symbols = sorted(set(self._master["symbol"]) | self._open_symbols())
             quotes = self.market.quotes(symbols)
-            chain, _ = build_live_chain(quotes, self._master, spots, self.pricing,
-                                        self.liquidity, now, self.settings.max_quote_age_s)
+            bars = self.market.bars(now)
+            chain, filters = build_live_chain(quotes, self._master, spots, self.pricing,
+                                              self.liquidity, now, self.settings.max_quote_age_s,
+                                              bars=bars)
+            if filters is not None:
+                report.exclusions = dict(filters.exclusions)
+                report.exclusions["quote_viejo"] = int(chain["excl_quote_viejo"].sum())
             self._errors = 0
         except Exception as exc:  # noqa: BLE001 - un ciclo fallido no detiene el loop
             self._errors += 1
@@ -215,15 +221,29 @@ class LiveRunner:
             if not quotes.empty else pd.DataFrame(columns=["bid", "ask"])
         )
 
-        if Path(self.settings.kill_file).exists():
-            self._halt("kill_file")
-            self._close_all("kill_file", quote_index, spots, report)
+        try:
+            if Path(self.settings.kill_file).exists():
+                self._halt("kill_file")
+                self._close_all("kill_file", quote_index, spots, report)
 
-        self._manage_positions(quote_index, spots, clock, now, today, report)
-        if not self.dry_run:
-            self._reconcile(report)
-        if self.halted_reason is None and self._entry_window(now, clock):
-            self._enter(chain, today, report)
+            self._manage_positions(quote_index, spots, clock, now, today, report)
+            if not self.dry_run:
+                self._reconcile(report)
+            if self.halted_reason is None and self._entry_window(now, clock):
+                self._enter(chain, today, report)
+        except Exception as exc:  # noqa: BLE001 - nunca abandonar el loop con órdenes vivas
+            # Una excepción acá puede ocurrir en medio de una secuencia (por
+            # ejemplo, con las acciones ya llenadas y antes de enviar las
+            # opciones). Morir dejaría patas sin registrar ni gestionar: se
+            # registra, se detienen las entradas y el loop sigue marcando,
+            # reconciliando y aplicando el kill-switch en los ciclos siguientes.
+            import traceback
+
+            self.ledger.event("execution_error", {"error": repr(exc),
+                                                  "traceback": traceback.format_exc()})
+            _LOG.error("Excepción durante la ejecución; se detienen las entradas: %r", exc)
+            self._halt("excepcion_en_ejecucion")
+            report.notes.append(repr(exc))
         report.halted = self.halted_reason
         self.cycles.append(report)
         return report

@@ -23,6 +23,7 @@ __all__ = [
     "Broker",
     "AlpacaBroker",
     "snapshot_from_order",
+    "signed_quantity",
 ]
 
 #: Estados de Alpaca después de los cuales la orden ya no cambia.
@@ -129,6 +130,12 @@ class Broker(Protocol):
     def clock(self) -> Any: ...
 
 
+def signed_quantity(qty: Any, side: Any) -> float:
+    """Cantidad con signo a partir de ``qty`` y ``side`` de una posición de Alpaca."""
+    amount = abs(float(qty))
+    return -amount if str(getattr(side, "value", side)).lower() == "short" else amount
+
+
 def _error_code(exc: Exception) -> int | None:
     try:
         return int(getattr(exc, "code"))
@@ -180,8 +187,14 @@ class AlpacaBroker:
             raise BrokerRejection(_error_message(exc), _error_code(exc)) from exc
 
     def positions(self) -> dict[str, float]:
-        """Posición con signo por símbolo: acciones, o contratos de opciones."""
-        return {p.symbol: float(p.qty) for p in self._client.get_all_positions()}
+        """Posición con signo por símbolo: acciones, o contratos de opciones.
+
+        El signo sale de ``side`` y no de ``qty``: el modelo del SDK documenta
+        ``qty`` como cantidad y ``side`` como ``long``/``short``, sin garantizar
+        que un corto venga negativo. Tomar el valor absoluto y aplicar el signo
+        de ``side`` funciona con cualquiera de las dos convenciones.
+        """
+        return {p.symbol: signed_quantity(p.qty, p.side) for p in self._client.get_all_positions()}
 
     def account(self) -> Any:
         return self._client.get_account()

@@ -173,8 +173,13 @@ class AsyncAlpacaGateway:
         start: datetime | date,
         end: datetime | date,
         timeframe: TimeFrame | None = None,
+        feed: Any | None = None,
     ) -> dict[str, Any]:
         """Descarga OHLCV del subyacente.
+
+        ``feed`` permite pedir IEX explícitamente: con claves gratuitas, SIP no
+        entrega los últimos 15 minutos, que es justo lo que necesita el loop en
+        vivo.
 
         Importante: se pide ``adjustment='raw'``. Los precios ajustados por
         splits y dividendos se recalculan **retroactivamente**, de modo que un
@@ -198,6 +203,7 @@ class AsyncAlpacaGateway:
             start=start,
             end=end,
             adjustment="raw",
+            feed=feed,
         )
         return await self._call(self._stock.get_stock_bars, request)
 

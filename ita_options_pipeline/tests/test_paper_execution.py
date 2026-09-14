@@ -276,6 +276,12 @@ class FakeMarket:
         self.calls += 1
         return chain[["symbol", "timestamp", "bid", "ask", "bid_size", "ask_size"]].copy()
 
+    def bars(self, now):
+        stamp = self.chains[0]["timestamp"].iloc[0]
+        # Barra rotulada un minuto antes del quote: su cierre está disponible en el quote.
+        return pd.DataFrame({"timestamp": [stamp - pd.Timedelta(minutes=1)],
+                             "symbol": ["RTX"], "close": [SPOT]})
+
 
 def dislocated_chain(shift: float = 3.0):
     chain = build_chain()
@@ -342,6 +348,63 @@ def test_loop_no_entra_fuera_de_la_ventana(tmp_path) -> None:
                          now="2026-09-03 13:35")  # 09:35 ET, antes de apertura + 15 min
     report = runner.run_cycle()
     assert report.signals == 0 and broker.submitted == []
+
+
+def test_spot_alineado_al_timestamp_del_quote_y_no_al_ultimo_quote() -> None:
+    """Regresión del dry-run: quotes demorados contra spot en tiempo real fabrican paridades."""
+    from ita_options.config import LiquidityThresholds, PricingAssumptions
+    from ita_options.execution.live_data import build_live_chain
+
+    market = FakeMarket([build_chain()])
+    master = market.universe({})
+    quotes = market.quotes([])
+    stamp = quotes["timestamp"].iloc[0]
+    late = quotes.iloc[:2].copy()
+    late["timestamp"] = stamp + pd.Timedelta(minutes=30)
+    late["symbol"] = late["symbol"]  # mismos contratos, quote posterior sin barra cercana
+    bars = pd.DataFrame({
+        "timestamp": [stamp - pd.Timedelta(minutes=10), stamp - pd.Timedelta(minutes=1)],
+        "symbol": ["RTX", "RTX"], "close": [140.0, 145.0],
+    })
+    chain, _ = build_live_chain(quotes, master, {"RTX": 199.0}, PricingAssumptions(),
+                                LiquidityThresholds(), stamp, 1200.0, bars=bars)
+    assert (chain["underlying_price"] == 145.0).all()
+    assert (chain["spot_source"] == "barra_alineada").all()
+
+    stale, _ = build_live_chain(late, master, {"RTX": 199.0}, PricingAssumptions(),
+                                LiquidityThresholds(), stamp + pd.Timedelta(minutes=30), 1200.0,
+                                bars=bars)
+    assert stale["underlying_price"].isna().all()
+    assert not stale["is_tradable"].any()
+
+
+def test_signo_de_posicion_por_side() -> None:
+    from types import SimpleNamespace
+
+    from ita_options.execution.broker import AlpacaBroker, signed_quantity
+
+    assert signed_quantity("100", "short") == -100.0
+    assert signed_quantity("-100", "short") == -100.0
+    assert signed_quantity("2", SimpleNamespace(value="long")) == 2.0
+    client = SimpleNamespace(get_all_positions=lambda: [
+        SimpleNamespace(symbol="RTX", qty="100", side=SimpleNamespace(value="short")),
+        SimpleNamespace(symbol=CALL, qty="1", side=SimpleNamespace(value="long")),
+    ])
+    assert AlpacaBroker(client).positions() == {"RTX": -100.0, CALL: 1.0}
+
+
+def test_excepcion_en_ejecucion_no_mata_el_loop(tmp_path) -> None:
+    class BrokenBroker(FakeBroker):
+        def submit(self, request):
+            raise ConnectionError("se cortó la red")
+
+    broker = BrokenBroker()
+    runner = make_runner(tmp_path, broker, [dislocated_chain()], dry_run=False)
+    report = runner.run_cycle()
+    assert report.halted == "excepcion_en_ejecucion"
+    assert runner.ledger.events("execution_error")
+    second = runner.run_cycle()  # sigue ciclando: gestiona y reconcilia, sin entrar
+    assert second.phase == "open" and second.entries_attempted == 0
 
 
 def test_loop_reporte_de_sesion(tmp_path) -> None:

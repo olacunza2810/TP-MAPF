@@ -369,6 +369,15 @@ Al terminar escribe `reportes/paper/session_<fecha>/` con estrategias, órdenes,
 
 El cierre invierte el orden: opciones primero, acciones después.
 
+**Controles agregados después del dry-run del 14/09/2026:**
+
+- **Spot alineado.** El spot de cada contrato es la barra IEX de 1 minuto vigente en el timestamp de su quote, no el último quote de la acción. Con quotes de opciones demorados, el spot en tiempo real fabricaba reversas de paridad que duraban un ciclo.
+- **Signo por `side`.** Las posiciones cortas toman el signo del campo `side` de Alpaca.
+- **Excepciones.** Una excepción durante la ejecución no mata el loop: se registra, se detienen las entradas y se siguen gestionando las posiciones.
+- **Diagnóstico.** `cycles.csv` guarda las exclusiones por criterio de cada ciclo.
+
+Para cortar usar el archivo `KILL`, no Ctrl+C: interrumpir el proceso en medio de una secuencia puede dejar patas sin gestionar.
+
 **Límites del piloto.** Con el feed `indicative` valida la cañería (órdenes, estado, reconciliación, kill-switch), no el edge. El paper de Alpaca no simula slippage, dividendos ni costo de préstamo. Los ejercicios y asignaciones se sincronizan al día siguiente, por eso las estructuras que vencen se cierran antes del cierre de la rueda.
 
 Componentes:
