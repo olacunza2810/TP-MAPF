@@ -31,7 +31,7 @@ Los hallazgos centrales son cuatro.
    fantasma de LMT en las tres semanas previas a cada fecha ex.
 3. **El binomial calibrado reproduce la cadena dentro del bid-ask.** Una
    sonrisa cuadrática por vencimiento revalúa en el árbol entre el 82% y el
-   93% de las opciones fuera del dinero dentro del spread, con un error
+   94% de las opciones fuera del dinero dentro del spread, con un error
    mediano de 0,2 a 0,3 medios spreads.
 4. **La estrategia de valor relativo contra el modelo pierde fuera de muestra,
    y sabemos por qué.** Publicar órdenes límite al precio del modelo menos un
@@ -142,9 +142,17 @@ y en cada nodo el máximo entre ejercer y continuar,
 
 $$V_i^n = \max\left(\Psi(S_i^n),\; e^{-r\Delta t}\left[p\,V_{i+1}^{n+1} + (1-p)\,V_i^{n+1}\right]\right).$$
 
-El dividendo discreto entra como un yield continuo equivalente: se elige $q$
-tal que $S e^{-q\tau} = S - D$, de modo que el forward del árbol coincida con
-el forward con dividendos discretos.
+El dividendo entra **discreto**, con el modelo de spot *escrowed* (Hull, cap.
+21): $S = S^* + D(t)$, con $D(t)$ el valor presente de los dividendos
+proyectados point-in-time que faltan cobrar. El árbol se arma sobre $S^*$ (con
+$q = 0$ en $p$) y en cada nodo el valor de ejercicio usa el precio real
+$S^*_{n,j} + D(t_n)$, así que el árbol sabe en qué fecha cae cada dividendo y
+valúa bien el ejercicio del call en la víspera de la fecha ex. Una primera
+versión usaba un yield continuo equivalente ($S e^{-q\tau} = S - D$), que da el
+mismo forward pero reparte el dividendo en todo el plazo; la comparación sobre
+las 181 ruedas (Parte 2) mostró que el tratamiento discreto erra menos
+(Diebold-Mariano 6,1) y la estrategia pasó a usarlo. Black-Scholes, al ser
+europeo, da lo mismo con las dos convenciones.
 
 ## 3.2 Calibración a la superficie
 
@@ -181,22 +189,22 @@ menor que 1 es dentro del bid-ask) y la fracción de precios dentro del spread.
 | Muestra | Ajuste | Activo | Contratos | RMSE USD | Error mediano (medios spreads) | Dentro del bid-ask |
 |----------------|-----------------|------|------:|------:|---------:|--------:|
 | Misma foto | Superficie | BA | 1.228 | 0,44 | 0,31 | 82% |
-| Misma foto | Superficie | LMT | 459 | 0,77 | 0,20 | 93% |
-| Misma foto | Superficie | RTX | 510 | 0,28 | 0,24 | 84% |
+| Misma foto | Superficie | LMT | 459 | 0,77 | 0,19 | 94% |
+| Misma foto | Superficie | RTX | 510 | 0,28 | 0,22 | 84% |
 | Misma foto | Sigma constante | BA | 1.228 | 0,66 | 1,12 | 46% |
-| Misma foto | Sigma constante | LMT | 459 | 1,26 | 0,52 | 78% |
-| Misma foto | Sigma constante | RTX | 510 | 0,49 | 1,08 | 49% |
+| Misma foto | Sigma constante | LMT | 459 | 1,26 | 0,49 | 78% |
+| Misma foto | Sigma constante | RTX | 510 | 0,49 | 1,08 | 48% |
 | Rueda siguiente | Superficie | BA | 1.178 | 0,65 | 1,59 | 35% |
 | Rueda siguiente | Superficie | LMT | 413 | 3,19 | 1,10 | 46% |
 | Rueda siguiente | Superficie | RTX | 393 | 0,60 | 1,32 | 41% |
 | Rueda siguiente | Sigma constante | BA | 1.178 | 0,56 | 1,65 | 34% |
-| Rueda siguiente | Sigma constante | LMT | 413 | 2,68 | 0,73 | 57% |
-| Rueda siguiente | Sigma constante | RTX | 393 | 0,54 | 1,50 | 36% |
+| Rueda siguiente | Sigma constante | LMT | 413 | 2,68 | 0,73 | 58% |
+| Rueda siguiente | Sigma constante | RTX | 393 | 0,54 | 1,52 | 36% |
 
 Valores del binomial (CRR); Black-Scholes da prácticamente lo mismo
 (`calibracion_rmse.csv`).
 
-Dentro de la misma foto la superficie reproduce la cadena: entre 82% y 93% de
+Dentro de la misma foto la superficie reproduce la cadena: entre 82% y 94% de
 los precios caen dentro del bid-ask, contra 46% a 78% con una sigma única. En la
 rueda siguiente la ventaja desaparece: la **forma** de la sonrisa es estable,
 pero su **nivel** se mueve día a día. La consecuencia práctica es que el modelo
@@ -340,11 +348,11 @@ al mes de apertura.
 
 | Modelo | Mes OOS | Configuración elegida | Op. IS | P&L IS | Órdenes OOS | Op. OOS | P&L OOS |
 |------|------------|-------------------------------|-----:|-------:|------:|-----:|-------:|
-| CRR | julio | $m$=20, conv. 50%, sin stop | 11 | 107 | 44 | 5 | 636 |
-| CRR | agosto | $m$=20, conv. 50%, sin stop | 16 | −999 | 42 | 0 | 0 |
-| CRR | septiembre | $m$=20, conv. 50%, sin stop | 16 | −98 | 40 | 2 | 189 |
-| CRR | octubre | $m$=20, conv. 100%, sin stop | 18 | 333 | 44 | 1 | −1.449 |
-| CRR | noviembre | $m$=20, sin conv., sin stop | 19 | 1.018 | 28 | 0 | 0 |
+| CRR | julio | $m$=20, conv. 50%, sin stop | 10 | −78 | 44 | 5 | 640 |
+| CRR | agosto | $m$=20, conv. 50%, sin stop | 15 | −1.180 | 42 | 0 | 0 |
+| CRR | septiembre | $m$=20, conv. 50%, sin stop | 15 | −278 | 40 | 2 | 189 |
+| CRR | octubre | $m$=20, conv. 100%, sin stop | 17 | 153 | 44 | 1 | −1.449 |
+| CRR | noviembre | $m$=20, sin conv., sin stop | 18 | 838 | 28 | 0 | 0 |
 | BSM | julio | $m$=20, conv. 50%, sin stop | 10 | −74 | 44 | 4 | 1.134 |
 | BSM | agosto | $m$=20, conv. 50%, sin stop | 14 | −1.182 | 42 | 0 | 0 |
 | BSM | septiembre | $m$=20, conv. 50%, sin stop | 14 | 222 | 40 | 2 | 190 |
@@ -352,13 +360,13 @@ al mes de apertura.
 | BSM | noviembre | $m$=20, sin conv., sin stop | 16 | 1.340 | 28 | 0 | 0 |
 
 P&L en USD por estructura de una unidad. Fuera de muestra: CRR 8 operaciones y
-USD −624; BSM 6 operaciones y USD +1.324.
+USD −620; BSM 6 operaciones y USD +1.324.
 
-**Muestra completa, las 18 configuraciones.** Binomial: 19 operaciones en
-cada configuración y P&L de USD −3.472 a −430; Sharpe anualizado de −1,29 a
-−0,14. Black-Scholes:
+**Muestra completa, las 18 configuraciones.** Binomial: de 18 a 20 operaciones
+y P&L de USD −3.709 a −610; Sharpe anualizado de −1,37 a
+−0,20. Black-Scholes:
 de 16 a 20 operaciones y P&L de USD −2.947 a +1.340; Sharpe de −1,16 a 0,50.
-El Sharpe deflactado ($N=18$, Bailey y López de Prado, 2014) va de 0,04 a 0,23
+El Sharpe deflactado ($N=18$, Bailey y López de Prado, 2014) va de 0,04 a 0,21
 en el binomial y de 0,04 a 0,35 en Black-Scholes: **ninguna configuración se
 distingue de una búsqueda sobre ruido**. En todas, la versión con kill-switch
 pierde más que la versión sin él.
@@ -374,7 +382,7 @@ hiperparámetros y sus 36 configuraciones suman al $N$ del Sharpe deflactado
 
 | Modelo | Operaciones | P&L total (rango) | Acierto (rango) | Sharpe (rango) |
 |---|---|---|---|---|
-| CRR | 59 a 82 | USD −18.667 a −7.454 | 20% a 46% | −3,56 a −1,19 |
+| CRR | 58 a 82 | USD −19.839 a −7.122 | 19% a 44% | −3,65 a −1,15 |
 | BSM | 56 a 77 | USD −17.884 a −6.222 | 20% a 43% | −3,58 a −1,20 |
 
 **Las 36 configuraciones pierden.** Es la firma de la selección adversa

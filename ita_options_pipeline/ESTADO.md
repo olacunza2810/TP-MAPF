@@ -61,8 +61,11 @@ Paso 3, en una línea por resultado (spot implícito, 181 ruedas, 36.515 contrat
   supera los USD 10 por contrato en 30% de los casos; BS subvalúa las puts ITM
   en USD 19 por contrato en promedio.
 - Dividendo discreto contra yield continuo: el escrowed erra menos (DM = 6,1); el
-  yield continuo subvalúa calls ITM en USD 16 por contrato. Decisión pendiente:
-  pasar la estrategia RV al árbol escrowed.
+  yield continuo subvalúa calls ITM en USD 16 por contrato. **Aplicado:** la
+  estrategia RV (vivo, backtest y calibración) valúa con el árbol escrowed
+  (`ita_options/escrowed.py`, columna `dividend_schedule`). Walk-forward,
+  sensibilidad y calibración recalculados; el informe se actualizó y las
+  conclusiones no cambian (DSR máximo 0,21; las 36 configuraciones pierden).
 
 ## Pendiente
 

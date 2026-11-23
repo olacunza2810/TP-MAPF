@@ -137,3 +137,7 @@ def test_cadena_en_vivo_recibe_el_dividendo_discreto() -> None:
     assert out.loc[0, "pv_dividends"] == pytest.approx(3.60 * np.exp(-0.04 * 12 / 365))
     assert 500 * np.exp(-out.loc[0, "dividend_yield"] * 30 / 365) == pytest.approx(500 - out.loc[0, "pv_dividends"])
     assert out.loc[1, "pv_dividends"] == 0.0 and out.loc[1, "dividend_yield"] == 0.0
+    # Calendario por fila para el árbol escrowed: LMT con su dividendo a 12 días, BA vacío.
+    (t_ex, amount), = out.loc[0, "dividend_schedule"]
+    assert (t_ex, amount) == (pytest.approx(12 / 365), pytest.approx(3.60))
+    assert out.loc[1, "dividend_schedule"] == ()

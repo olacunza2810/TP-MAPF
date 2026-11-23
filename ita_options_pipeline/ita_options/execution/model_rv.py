@@ -59,6 +59,10 @@ import numpy as np
 import pandas as pd
 
 from ..arbitrage import ExecutionCosts
+from ..escrowed import implied_vol as escrowed_iv
+from ..escrowed import model_price as escrowed_price
+from ..escrowed import row_dividends
+from ..greeks import pv_dividends
 from ..volatility import bsm_price, crr_american_price, implied_volatility
 
 _LOG = logging.getLogger(__name__)
@@ -100,7 +104,11 @@ class RVSettings:
 
 
 def _price(model: Model, spot: float, strike: float, tau: float, rate: float,
-           q: float, sigma: float, flag: str, steps: int) -> float:
+           q: float, sigma: float, flag: str, steps: int,
+           dividends: tuple[tuple[float, float], ...] | None = None) -> float:
+    """Precio del modelo. Con calendario de dividendos, spot escrowed; sin él, yield continuo ``q``."""
+    if dividends is not None:
+        return escrowed_price(model, spot, strike, tau, rate, sigma, flag, dividends, steps)
     if model == "crr":
         return crr_american_price(spot, strike, tau, rate, q, sigma, flag, steps=steps)
     return bsm_price(spot, strike, tau, rate, q, sigma, flag)
@@ -143,7 +151,12 @@ def fit_smile(slice_: pd.DataFrame, model: Model, settings: RVSettings) -> Smile
     rate, q = float(row0["risk_free_rate"]), float(row0.get("dividend_yield", 0.0) or 0.0)
     if not (spot > 0 and tau > 0):
         return None
-    forward = spot * np.exp((rate - q) * tau)
+    divs = row_dividends(row0)
+    if divs is not None:
+        # Dividendos discretos: F = (S - D) e^{r tau}, la sonrisa es de S* = S - D.
+        forward = (spot - pv_dividends(divs, rate, tau)) * np.exp(rate * tau)
+    else:
+        forward = spot * np.exp((rate - q) * tau)
     otm = slice_.loc[
         (slice_["bid"] > 0)
         & (((slice_["option_type"] == "p") & (slice_["strike"] < forward))
@@ -152,8 +165,11 @@ def fit_smile(slice_: pd.DataFrame, model: Model, settings: RVSettings) -> Smile
     ks, ivs, weights = [], [], []
     for r in otm.itertuples(index=False):
         mid = (r.bid + r.ask) / 2.0
-        iv = implied_volatility(mid, spot, float(r.strike), tau, rate, q, str(r.option_type),
-                                american=(model == "crr"), steps=settings.steps)
+        if divs is not None:
+            iv = escrowed_iv(model, mid, spot, float(r.strike), tau, rate, str(r.option_type), divs, settings.steps)
+        else:
+            iv = implied_volatility(mid, spot, float(r.strike), tau, rate, q, str(r.option_type),
+                                    american=(model == "crr"), steps=settings.steps)
         if not np.isfinite(iv) or not 0.03 < iv < 3.0:
             continue
         k = np.log(float(r.strike) / forward)
@@ -179,12 +195,13 @@ def _structure_signal(
     first = legs[0][0]
     spot, tau = float(first["underlying_price"]), float(first["tau"])
     rate, q = float(first["risk_free_rate"]), float(first.get("dividend_yield", 0.0) or 0.0)
+    divs = row_dividends(first)
     model_value = 0.0
     width = 0.0
     for row, qty in legs:
         sigma = smile.sigma(float(row["strike"]))
         model_value += qty * _price(model, spot, float(row["strike"]), tau, rate, q, sigma,
-                                    str(row["option_type"]), settings.steps)
+                                    str(row["option_type"]), settings.steps, divs)
         width += abs(qty) * (float(row["ask"]) - float(row["bid"]))
     n_contracts = sum(abs(qty) for _, qty in legs)
     commission = costs.commission_per_contract * n_contracts

@@ -70,13 +70,12 @@ from typing import Literal, Sequence
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import brentq
 from scipy.stats import t as student_t
 
 from .dolthub import projected_dividends
 from .execution.model_rv import Smile
-from .greeks import bs_greeks, crr_price, pv_dividends
-from .volatility import crr_american_price
+from .escrowed import equivalent_yield, implied_vol, model_price
+from .greeks import crr_price, pv_dividends
 
 __all__ = [
     "ComparisonSettings",
@@ -129,61 +128,6 @@ def contract_dividends(dividends: pd.DataFrame, underlying: str, asof: date, exp
     """Dividendos proyectados point-in-time en la vida del contrato, como ``(años, monto)``."""
     flows = projected_dividends(dividends, underlying, asof, expiration)
     return [((d - asof).days / 365.0, a) for d, a in flows]
-
-
-def equivalent_yield(spot: float, rate: float, tau: float, dividends: Dividends) -> float:
-    r""":math:`q` continuo con :math:`S e^{-q\tau} = S - D` (la convención de ``_effective_yield``)."""
-    D = pv_dividends(dividends, rate, tau)
-    return -math.log(max(1.0 - D / spot, 0.5)) / max(tau, 1e-6)
-
-
-def model_price(model: Model, spot: float, strike: float, tau: float, rate: float, sigma: float,
-                flag: str, dividends: Dividends, steps: int = 100) -> float:
-    """Precio de ``crr`` (americano escrowed), ``bsm`` (europeo escrowed) o ``crr_q`` (americano, yield continuo)."""
-    if model == "crr":
-        return crr_price(spot, strike, tau, rate, sigma, flag, dividends, steps=steps)
-    if model == "crr_q":
-        q = equivalent_yield(spot, rate, tau, dividends)
-        return crr_american_price(spot, strike, tau, rate, q, sigma, flag, steps=steps)
-    return bs_greeks(spot, strike, tau, rate, sigma, flag, dividends).price
-
-
-def implied_vol(model: Model, price: float, spot: float, strike: float, tau: float, rate: float,
-                flag: str, dividends: Dividends, steps: int = 100, lo: float = 0.03, hi: float = 3.0) -> float:
-    r"""IV con el precio del modelo; ``nan`` si el precio está fuera de lo alcanzable.
-
-    Para el árbol arranca de la IV de Black-Scholes y hace Newton con la vega de
-    BS (la vega del árbol y la de BS son casi iguales): converge en dos o tres
-    árboles. Si Newton se escapa, cae a Brent.
-    """
-    def f(sig: float) -> float:
-        return model_price(model, spot, strike, tau, rate, sig, flag, dividends, steps) - price
-
-    try:
-        f_lo, f_hi = f(lo), f(hi)
-    except ValueError:
-        return float("nan")
-    if not (f_lo < 0 < f_hi):
-        return float("nan")
-    if model == "bsm":
-        return float(brentq(f, lo, hi, xtol=1e-6))
-    start = implied_vol("bsm", price, spot, strike, tau, rate, flag, dividends)
-    sig = start if np.isfinite(start) else 0.3
-    if model == "crr_q":
-        # sigma de S*  ->  sigma de S (Hull): punto de partida para el árbol con yield continuo.
-        sig *= 1.0 - pv_dividends(dividends, rate, tau) / spot
-    for _ in range(6):
-        err = f(sig)
-        if abs(err) < 1e-4:
-            return float(sig)
-        vega = bs_greeks(spot, strike, tau, rate, sig, flag, dividends).vega
-        if vega < 1e-6:
-            break
-        nxt = sig - err / vega
-        if not lo < nxt < hi:
-            break
-        sig = nxt
-    return float(brentq(f, lo, hi, xtol=1e-6))
 
 
 def fit_escrowed_smile(slice_: pd.DataFrame, model: Model, dividends: Dividends,

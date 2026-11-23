@@ -40,8 +40,8 @@ from typing import Iterable, Literal, Sequence
 import numpy as np
 import pandas as pd
 
-from .execution.model_rv import RVSettings, Smile, fit_smile
-from .volatility import bsm_price, crr_american_price
+from .escrowed import row_dividends
+from .execution.model_rv import RVSettings, Smile, _price as _rv_price, fit_smile
 
 _LOG = logging.getLogger(__name__)
 
@@ -64,10 +64,10 @@ def _effective_yield(chain: pd.DataFrame) -> pd.Series:
     return (-np.log(ratio) / chain["tau"].clip(lower=1e-6)).fillna(0.0)
 
 
-def _price(model: Model, s: float, k: float, t: float, r: float, q: float, sig: float, f: str, steps: int) -> float:
-    if model == "crr":
-        return crr_american_price(s, k, t, r, q, sig, f, steps=steps)
-    return bsm_price(s, k, t, r, q, sig, f)
+def _price(model: Model, s: float, k: float, t: float, r: float, q: float, sig: float, f: str, steps: int,
+           dividends: tuple[tuple[float, float], ...] | None = None) -> float:
+    """El mismo pricer que la estrategia en vivo (:func:`execution.model_rv._price`)."""
+    return _rv_price(model, s, k, t, r, q, sig, f, steps, dividends)
 
 
 def candidate_structures(slice_: pd.DataFrame, forward: float, band: float) -> list[tuple[str, tuple[tuple[str, float], ...]]]:
@@ -92,6 +92,7 @@ def candidate_structures(slice_: pd.DataFrame, forward: float, band: float) -> l
 def precompute_valuations(
     chain: pd.DataFrame, model: Model, settings: RVSettings | None = None,
     min_dte: int = 14, max_dte: int = 90, band: float = 0.12,
+    dividends: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Sonrisas y valores de modelo por rueda, independientes de los hiperparámetros.
 
@@ -101,6 +102,10 @@ def precompute_valuations(
         settings: Parámetros de ajuste de la sonrisa (pasos del árbol, puntos mínimos).
         min_dte, max_dte: Ventana amplia de vencimientos; la grilla la recorta.
         band: :math:`|\\ln(K/F)|` máximo de las patas.
+        dividends: Tabla de dividendos (``merge_dividends``). Si se pasa, cada
+            contrato se valúa con sus dividendos discretos proyectados
+            point-in-time (spot escrowed), igual que la estrategia en vivo; si
+            no, con el yield continuo equivalente.
 
     Returns:
         ``(estructuras, sonrisas)``. Cada fila de ``estructuras`` es una
@@ -111,6 +116,10 @@ def precompute_valuations(
     base = chain.loc[(chain["bid"] > 0) & (chain["ask"] > chain["bid"])].copy()
     base["q_eff"] = _effective_yield(base)
     base["dividend_yield"] = base["q_eff"]
+    if dividends is not None:
+        from .dolthub import attach_dividend_schedule
+
+        base = attach_dividend_schedule(base, dividends)
     structures: list[dict[str, object]] = []
     smiles: list[dict[str, object]] = []
     for (day, und, exp), slice_ in base.groupby(["trade_date", "underlying", "expiration"], sort=True):
@@ -123,6 +132,7 @@ def precompute_valuations(
         smiles.append({"trade_date": day, "underlying": und, "expiration": exp, "dte": dte, **asdict(smile)})
         row0 = slice_.iloc[0]
         s, t, r, q = float(row0["underlying_price"]), float(row0["tau"]), float(row0["risk_free_rate"]), float(row0["q_eff"])
+        divs = row_dividends(row0)
         quotes = slice_.set_index("symbol")
         values: dict[str, float] = {}
         for kind, legs in candidate_structures(slice_, smile.forward, band):
@@ -131,7 +141,7 @@ def precompute_valuations(
                 if sym not in values:
                     rq = quotes.loc[sym]
                     values[sym] = _price(model, s, float(rq["strike"]), t, r, q, smile.sigma(float(rq["strike"])),
-                                         str(rq["option_type"]), settings.steps)
+                                         str(rq["option_type"]), settings.steps, divs)
                 v += qty * values[sym]
             bid_net = sum(qty * float(quotes.loc[sym, "bid" if qty > 0 else "ask"]) for sym, qty in legs)
             ask_net = sum(qty * float(quotes.loc[sym, "ask" if qty > 0 else "bid"]) for sym, qty in legs)

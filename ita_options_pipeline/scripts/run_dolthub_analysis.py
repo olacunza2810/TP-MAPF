@@ -180,11 +180,12 @@ def step_arbitrage(data_root: Path, out: Path) -> None:
 
 
 def step_valuations(data_root: Path, out: Path) -> None:
-    curated, _, _ = _load_curated(data_root)
+    curated, _, data = _load_curated(data_root)
     tradable = curated.loc[curated["is_tradable"]]
     for model in ("crr", "bsm"):
         started = time.monotonic()
-        vals, smiles = precompute_valuations(tradable, model)
+        # Dividendos discretos escrowed, como la estrategia en vivo (Parte 2, paso 3).
+        vals, smiles = precompute_valuations(tradable, model, dividends=data.dividends)
         vals.to_pickle(data_root / "dolthub" / f"valuaciones_{model}.pkl")
         smiles.to_csv(out / f"sonrisas_{model}.csv", index=False)
         _LOG.info("Valuaciones %s: %d filas en %.0fs", model, len(vals), time.monotonic() - started)

@@ -47,9 +47,10 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ita_options.execution.model_rv import RVSettings, fit_smile  # noqa: E402
+from ita_options.dolthub import attach_dividend_schedule, merge_dividends  # noqa: E402
+from ita_options.escrowed import implied_vol as escrowed_iv  # noqa: E402
+from ita_options.execution.model_rv import RVSettings, _price as rv_price, fit_smile  # noqa: E402
 from ita_options.rv_backtest import _effective_yield  # noqa: E402
-from ita_options.volatility import bsm_price, crr_american_price, implied_volatility  # noqa: E402
 
 _LOG = logging.getLogger("calibration")
 SURFACE = "#fcfcfb"
@@ -69,16 +70,18 @@ def _otm(slice_: pd.DataFrame, forward: float) -> pd.DataFrame:
 
 
 def _price(model: str, r, sigma: float, steps: int = 100) -> float:
-    if model == "crr":
-        return crr_american_price(r.underlying_price, r.strike, r.tau, r.risk_free_rate, r.q_eff, sigma, r.option_type, steps=steps)
-    return bsm_price(r.underlying_price, r.strike, r.tau, r.risk_free_rate, r.q_eff, sigma, r.option_type)
+    """El pricer de la estrategia: dividendos discretos escrowed (Parte 2, paso 3)."""
+    return rv_price(model, r.underlying_price, r.strike, r.tau, r.risk_free_rate, r.q_eff, sigma,
+                    r.option_type, steps, r.dividend_schedule)
 
 
-def calibrate(curated: pd.DataFrame, models=("crr", "bsm")) -> tuple[pd.DataFrame, pd.DataFrame]:
+def calibrate(curated: pd.DataFrame, dividends: pd.DataFrame,
+              models=("crr", "bsm")) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Ajusta y valúa. Devuelve ``(errores_por_contrato, ivs_observadas)``."""
     base = curated.loc[curated["is_tradable"] & curated["dte"].between(7, 120)].copy()
     base["q_eff"] = _effective_yield(base)
     base["dividend_yield"] = base["q_eff"]
+    base = attach_dividend_schedule(base, dividends)
     days = sorted(base["trade_date"].unique())
     sample = weekly_days(days)
     next_day = {d: days[i + 1] for i, d in enumerate(days[:-1])}
@@ -98,8 +101,8 @@ def calibrate(curated: pd.DataFrame, models=("crr", "bsm")) -> tuple[pd.DataFram
                     mid = (r.bid + r.ask) / 2
                     k = np.log(r.strike / smile.forward)
                     if model == "crr":
-                        iv = implied_volatility(mid, r.underlying_price, r.strike, r.tau, r.risk_free_rate,
-                                                r.q_eff, r.option_type, american=True, steps=100)
+                        iv = escrowed_iv("crr", mid, r.underlying_price, r.strike, r.tau, r.risk_free_rate,
+                                         r.option_type, r.dividend_schedule, steps=100)
                         ivs.append({"trade_date": day, "underlying": und, "expiration": exp, "dte": r.dte,
                                     "k": k, "iv_crr": iv, "iv_proveedor": r.provider_iv,
                                     "option_type": r.option_type, "sigma_modelo": smile.sigma(r.strike)})
@@ -231,7 +234,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.plots_only:
         plot(pd.read_csv(out / "calibracion_iv_observada.csv"), out)
         return
-    err, ivs = calibrate(curated)
+    dividends = merge_dividends(pd.read_parquet(Path(args.data_root) / "dolthub" / "dividends.parquet"),
+                                Path(args.data_root) / "dolthub" / "dividends_polygon.parquet")
+    err, ivs = calibrate(curated, dividends)
     err.to_csv(out / "calibracion_errores_por_contrato.csv", index=False)
     ivs.to_csv(out / "calibracion_iv_observada.csv", index=False)
     table = summarize(err)

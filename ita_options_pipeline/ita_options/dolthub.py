@@ -206,6 +206,40 @@ def _pv_dividends(
     return out
 
 
+def dividend_schedule(dividends: pd.DataFrame, underlying: str, asof: date,
+                      expiration: date) -> tuple[tuple[float, float], ...]:
+    """Dividendos proyectados point-in-time en la vida del contrato, como ``(años, monto)``."""
+    flows = projected_dividends(dividends, underlying, asof, expiration)
+    return tuple(((d - asof).days / 365.0, float(a)) for d, a in flows)
+
+
+def attach_dividend_schedule(chain: pd.DataFrame, dividends: pd.DataFrame | None) -> pd.DataFrame:
+    """Agrega la columna ``dividend_schedule`` (ver :mod:`ita_options.escrowed`).
+
+    Sin tabla de dividendos, cada fila lleva una tupla vacía: la cadena queda
+    explícitamente "sin dividendos" y los pricers usan el modelo escrowed igual.
+    """
+    from .escrowed import SCHEDULE_COLUMN
+
+    out = chain.copy()
+    if out.empty:
+        out[SCHEDULE_COLUMN] = pd.Series(dtype=object)
+        return out
+    trade = pd.to_datetime(out["trade_date"]).dt.date
+    expiry = pd.to_datetime(out["expiration"]).dt.date
+    keys = pd.DataFrame({"u": out["underlying"].astype(str), "t": trade, "e": expiry}, index=out.index)
+    cache: dict[tuple, tuple] = {}
+    values = []
+    for u, t, e in keys.itertuples(index=False):
+        key = (u, t, e)
+        if key not in cache:
+            cache[key] = (dividend_schedule(dividends, u, t, e)
+                          if dividends is not None and not dividends.empty else ())
+        values.append(cache[key])
+    out[SCHEDULE_COLUMN] = pd.Series(values, index=out.index, dtype=object)
+    return out
+
+
 def attach_projected_dividends(chain: pd.DataFrame, dividends: pd.DataFrame) -> pd.DataFrame:
     """Agrega ``pv_dividends`` y el yield continuo equivalente a una cadena en vivo.
 
@@ -226,7 +260,9 @@ def attach_projected_dividends(chain: pd.DataFrame, dividends: pd.DataFrame) -> 
     out["pv_dividends"] = _pv_dividends(work, dividends)
     ratio = (1.0 - out["pv_dividends"] / out["underlying_price"]).clip(lower=0.5)
     out["dividend_yield"] = (-np.log(ratio) / out["tau"].clip(lower=1e-6)).fillna(0.0)
-    return out
+    # Calendario de dividendos por fila: los pricers de la estrategia usan el
+    # árbol escrowed (dividendo en su fecha), no el yield continuo.
+    return attach_dividend_schedule(out, dividends)
 
 
 def implied_spot(chain: pd.DataFrame) -> pd.DataFrame:
