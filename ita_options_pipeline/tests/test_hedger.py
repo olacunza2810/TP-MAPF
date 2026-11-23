@@ -129,3 +129,75 @@ def runner_chain(runner: LiveRunner, chain: pd.DataFrame) -> pd.DataFrame:
     live, _ = build_live_chain(quotes, market.universe(market.spots()), market.spots(), runner.pricing,
                                runner.liquidity, NOW, runner.settings.max_quote_age_s, bars=market.bars(NOW))
     return live
+
+
+# --------------------------------------------------------------------------- #
+# Delta-gamma: opción ATM corta comprada + acciones
+# --------------------------------------------------------------------------- #
+
+
+def _two_expiries() -> pd.DataFrame:
+    return build_chain(expiries=(("2026-09-23", 20 / 365), ("2026-10-16", 43 / 365)), spread=0.20)
+
+
+def _single(chain: pd.DataFrame, strike: float, units: int, contracts: int) -> dict:
+    long_exp = max(chain["expiration"].unique())
+    calls = chain.loc[(chain["option_type"] == "c") & (chain["expiration"] == long_exp)]
+    calls = calls.set_index("strike")
+    return {"detector": "rv_crr_vertical", "underlying": "RTX", "contracts_open": contracts,
+            "legs": [{"kind": "option", "symbol": calls.loc[strike, "symbol"], "units": units}]}
+
+
+def test_la_opcion_de_gamma_es_la_atm_corta_y_se_mantiene_cerca_del_dinero() -> None:
+    from ita_options.execution.hedger import pick_gamma_option
+
+    chain = _two_expiries()
+    short_exp, long_exp = sorted(chain["expiration"].unique())
+    pick = pick_gamma_option(chain, "RTX", exclude={long_exp})
+    assert pick["expiration"] == short_exp and pick["strike"] == 150 and pick["option_type"] == "c"
+    # El vencimiento de la propia posición se excluye.
+    assert pick_gamma_option(chain, "RTX", exclude={short_exp})["expiration"] == long_exp
+    # La que ya se tiene se mantiene si sigue a menos de 5% del dinero.
+    held = chain.loc[(chain["expiration"] == short_exp) & (chain["strike"] == 155) & (chain["option_type"] == "c"),
+                     "symbol"].iloc[0]
+    assert pick_gamma_option(chain, "RTX", exclude={long_exp}, keep=held)["symbol"] == held
+
+
+def _hedger(broker: FakeBroker, ledger: Ledger, mode: str = "delta_gamma") -> DeltaHedger:
+    clock = SimTime()
+    return DeltaHedger(broker, ledger, HedgeSettings(mode=mode, band_shares=1.0), ExecutionSettings(order_poll_s=1.0),
+                       timing=Timing(sleep=clock.sleep, now=clock.now), dry_run=False)
+
+
+def test_un_libro_corto_en_gamma_compra_la_atm_y_cubre_la_delta_restante() -> None:
+    chain = _two_expiries()
+    broker, ledger = FakeBroker(market_price=150.0), Ledger()
+    hedger = _hedger(broker, ledger)
+    strategy = _single(chain, 150, -1, 3)  # 3 calls ATM vendidas: gamma negativa
+    table = hedger.run([strategy], chain, {"RTX": 150.0})
+    row = table.iloc[0]
+    assert row["gamma"] < 0 and row["gamma_n_objetivo_continuo"] > 0.5
+    options = ledger.hedge_options("crr", "RTX")
+    assert len(options) == 1 and options[0]["contracts"] == row["gamma_n_objetivo"] >= 1
+    # La delta que queda se cubre con acciones, contando la delta de la opción comprada.
+    assert ledger.hedge_book("crr", "RTX")["shares"] == row["objetivo"]
+    assert row["objetivo"] == -round(row["delta"] + row["delta_opcion_cobertura"])
+    # La cuenta tiene exactamente lo que dice el ledger (acciones y opciones).
+    assert reconcile(ledger, broker).ok
+    # Cierre: se venden las opciones compradas y se cierran las acciones.
+    hedger.run([], chain, {"RTX": 150.0}, flatten=True)
+    assert not ledger.hedge_options()
+    assert all(b["shares"] == 0 for b in ledger.hedge_books())
+    assert reconcile(ledger, broker).ok and not broker.positions()
+
+
+def test_un_libro_largo_en_gamma_no_vende_opciones_descubiertas() -> None:
+    chain = _two_expiries()
+    broker, ledger = FakeBroker(market_price=150.0), Ledger()
+    table = _hedger(broker, ledger).run([_single(chain, 150, +1, 3)], chain, {"RTX": 150.0})
+    row = table.iloc[0]
+    assert row["gamma_n_objetivo_continuo"] < -0.5 and row["gamma_n_objetivo"] == 0
+    assert "descubiertas" in row["gamma_limitacion"]
+    assert not ledger.hedge_options()
+    # La delta igual se cubre con acciones.
+    assert ledger.hedge_book("crr", "RTX")["shares"] == -round(row["delta"])

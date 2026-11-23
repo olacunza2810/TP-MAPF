@@ -16,17 +16,21 @@
   "costo_por_posicion": {
     "bsm_delta": 3.1573750827826017,
     "bsm_delta_gamma": 132.5984179392161,
+    "bsm_delta_gamma_entera": 152.02448985174894,
     "bsm_delta_vega": 188.18872489257623,
     "crr_delta": 3.1806079955181983,
     "crr_delta_gamma": 133.2005899312913,
+    "crr_delta_gamma_entera": 153.5019361792217,
     "crr_delta_vega": 187.50226995794736
   },
   "costo_rebalanceo_dia_intermedio": {
     "bsm_delta": 0.10649858669010442,
     "bsm_delta_gamma": 6.223470113989037,
+    "bsm_delta_gamma_entera": 8.383966001488702,
     "bsm_delta_vega": 20.672422016006372,
     "crr_delta": 0.10759924958892035,
     "crr_delta_gamma": 6.2709376511057116,
+    "crr_delta_gamma_entera": 8.41481666999593,
     "crr_delta_vega": 20.7166915453234
   },
   "dias_intermedios": 784,
@@ -58,6 +62,20 @@
       "pnl_neto_medio": -68.20888827788778,
       "acciones_medias": 52.776401077898925,
       "contratos_cobertura_medios": 0.6545912942173201
+    },
+    {
+      "modelo": "bsm",
+      "cobertura": "delta_gamma_entera",
+      "dias_posicion": 3272,
+      "efectividad": 0.9510681756871703,
+      "efectividad_neta": 0.734348062521976,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 61.26456374260353,
+      "pnl_medio": 2.8217338880870986,
+      "costo_medio": 81.26247944703816,
+      "pnl_neto_medio": -78.44074555895106,
+      "acciones_medias": 57.00573108263268,
+      "contratos_cobertura_medios": 0.7820904645476773
     },
     {
       "modelo": "bsm",
@@ -103,6 +121,20 @@
     },
     {
       "modelo": "crr",
+      "cobertura": "delta_gamma_entera",
+      "dias_posicion": 3272,
+      "efectividad": 0.9508930497638731,
+      "efectividad_neta": 0.7311662080421074,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 61.37409808815441,
+      "pnl_medio": 2.6395530278668886,
+      "costo_medio": 82.05222688797639,
+      "pnl_neto_medio": -79.4126738601095,
+      "acciones_medias": 58.01386809573003,
+      "contratos_cobertura_medios": 0.7958435207823961
+    },
+    {
+      "modelo": "crr",
       "cobertura": "delta_vega",
       "dias_posicion": 3272,
       "efectividad": 0.9384376190431727,
@@ -134,6 +166,15 @@
       "d_medio": 12.381078226593837,
       "dm": 0.6224523252391857,
       "p_valor": 0.5347693308753717
+    },
+    {
+      "cobertura": "delta_gamma_entera",
+      "perdida": "pnl^2 bruto",
+      "dias_posicion": 3272,
+      "T": 127,
+      "d_medio": -19.78204770500118,
+      "dm": -0.3651040917666279,
+      "p_valor": 0.7156458342502309
     },
     {
       "cobertura": "delta_vega",

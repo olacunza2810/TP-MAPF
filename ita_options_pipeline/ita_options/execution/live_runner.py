@@ -233,6 +233,7 @@ class LiveRunner:
             self.cycles.append(report)
             return report
 
+        self._last_chain = chain
         report.chain_rows = len(chain)
         report.tradable = int(chain["is_tradable"].sum()) if not chain.empty else 0
         quote_index = (
@@ -301,7 +302,7 @@ class LiveRunner:
         report.daily_pnl = self.ledger.realized_pnl(today) + unrealized_total
         if self.hedger is not None:
             # P&L del día de los libros de cobertura: valor de mercado contra el del inicio de la rueda.
-            value = self.hedger.hedge_value(spots)
+            value = self.hedger.hedge_value(spots, quotes)
             if self._hedge_baseline is None or self._hedge_baseline[0] != today:
                 self._hedge_baseline = (today, value)
             report.hedge_pnl = value - self._hedge_baseline[1]
@@ -316,8 +317,10 @@ class LiveRunner:
         for strategy in self.ledger.open_strategies():
             self._close(strategy, reason, quotes, report)
         if self.hedger is not None and not self.dry_run:
-            # Sin posiciones de opciones no hay nada que cubrir: se cierran los libros.
-            table = self.hedger.run([], pd.DataFrame(), spots, flatten=True)
+            # Sin posiciones de opciones no hay nada que cubrir: se cierran los libros
+            # (las opciones de cobertura se venden con la última cadena del ciclo).
+            chain = self._last_chain if self._last_chain is not None else pd.DataFrame()
+            table = self.hedger.run([], chain, spots, flatten=True)
             report.hedge_trades += int((table.get("operado", pd.Series(dtype=float)) != 0).sum())
 
     def _hedge(self, chain: pd.DataFrame, spots: Mapping[str, float], report: CycleReport) -> None:

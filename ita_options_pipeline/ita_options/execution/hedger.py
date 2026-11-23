@@ -18,11 +18,25 @@ competencia también compara la calidad de las griegas, no sólo la del precio.
 Los dos libros comparten la cuenta; el broker ve la suma. Una orden que haría
 cruzar por cero la posición neta del broker se parte en dos (primero a cero).
 
-La gamma no se cubre en vivo: se informa cuántos contratos de la call ATM la
-anularían. El backtest del paso 4 mostró que, con los spreads de estas opciones,
-cubrir gamma con opciones cuesta más de lo que reduce el riesgo, y además las
-estructuras son de 1 contrato (la cobertura redondeada da casi siempre 0) y una
-venta de opción descubierta no se puede hacer con nivel 3 de opciones.
+Modo ``delta_gamma``
+--------------------
+Antes de la delta se cubre la gamma del libro con la call ATM del vencimiento
+más corto (al menos 14 días, distinto de los de las patas del libro):
+
+.. math::
+
+    n^* = -\frac{\Gamma_B}{100\,\Gamma_H}, \qquad
+    n = \max\big(\mathrm{round}(n^*),\, 0\big),
+
+y la delta que queda se cubre con acciones,
+:math:`h^* = -\mathrm{round}(\Delta_B + 100\, n\, \Delta_H)`. Dos límites
+reales de la cuenta: los contratos son enteros, y con nivel 3 de opciones no se
+puede **vender** una opción descubierta, así que la cobertura sólo compra
+opciones (o vende las que ya compró). Un libro con gamma larga (``n* < 0``)
+queda cubierto sólo en delta. La opción se mantiene mientras siga a menos de 5%
+del dinero y le queden 7 días; si no, se rota. El backtest del paso 4 mide lo
+que cuesta: con los spreads de estas opciones, armar y desarmar la cobertura de
+gamma cuesta más que la reducción de riesgo que compra.
 """
 
 from __future__ import annotations
@@ -34,7 +48,7 @@ from typing import Any, Callable, Literal, Mapping
 
 import pandas as pd
 from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
 from ..config import ExecutionSettings
 from ..escrowed import row_dividends
@@ -54,15 +68,21 @@ class HedgeSettings:
     """Parámetros de la cobertura en vivo.
 
     Attributes:
-        mode: ``none`` sólo informa las griegas; ``delta`` cubre con acciones.
+        mode: ``none`` sólo informa las griegas; ``delta`` cubre con acciones;
+            ``delta_gamma`` compra la call ATM corta para la gamma y cubre la
+            delta restante con acciones.
         band_shares: Desvío mínimo (acciones) entre objetivo y posición para rebalancear.
         max_shares: Tope de acciones por libro (protección ante una griega rota).
+        max_option_contracts: Tope de contratos de la opción de cobertura por libro.
+        min_hedge_dte: Plazo mínimo de la opción de cobertura al elegirla.
         steps: Pasos del árbol para las griegas del binomial.
     """
 
-    mode: Literal["none", "delta"] = "none"
+    mode: Literal["none", "delta", "delta_gamma"] = "none"
     band_shares: float = 10.0
     max_shares: float = 1000.0
+    max_option_contracts: int = 5
+    min_hedge_dte: int = 14
     steps: int = 100
 
 
@@ -72,6 +92,32 @@ def model_of_detector(detector: str | None) -> str | None:
     if len(parts) >= 2 and parts[0] == "rv" and parts[1] in ("crr", "bsm"):
         return parts[1]
     return None
+
+
+class _SmileCache:
+    """Sonrisas por (modelo, subyacente, vencimiento) sobre la cadena del ciclo."""
+
+    def __init__(self, chain: pd.DataFrame, steps: int) -> None:
+        self.fit_base = chain.loc[chain["is_tradable"]] if "is_tradable" in chain else chain
+        self.steps = steps
+        self._cache: dict[tuple, Any] = {}
+
+    def greeks(self, model: str, row: Mapping[str, Any]) -> Any | None:
+        key = (model, row["underlying"], row["expiration"])
+        if key not in self._cache:
+            part = self.fit_base.loc[(self.fit_base["underlying"] == row["underlying"])
+                                     & (self.fit_base["expiration"] == row["expiration"])]
+            self._cache[key] = fit_smile(part, model, RVSettings(model=model, steps=self.steps)) if not part.empty else None
+        smile = self._cache[key]
+        if smile is None:
+            return None
+        divs = row_dividends(pd.Series(row)) or ()
+        try:
+            return model_greeks(model, float(row["underlying_price"]), float(row["strike"]), float(row["tau"]),
+                                float(row["risk_free_rate"]), smile.sigma(float(row["strike"])),
+                                str(row["option_type"]), divs, steps=self.steps)
+        except ValueError:
+            return None
 
 
 def portfolio_greeks(
@@ -89,8 +135,7 @@ def portfolio_greeks(
     if chain.empty:
         return pd.DataFrame(), []
     by_symbol = chain.drop_duplicates("symbol", keep="last").set_index("symbol")
-    fit_base = chain.loc[chain["is_tradable"]] if "is_tradable" in chain else chain
-    smiles: dict[tuple, Any] = {}
+    cache = _SmileCache(chain, steps)
     agg: dict[tuple[str, str], dict[str, float]] = {}
     missing: list[str] = []
     for strategy in strategies:
@@ -100,7 +145,7 @@ def portfolio_greeks(
         contracts = int(strategy.get("contracts_open") or 0)
         key = (model, str(strategy.get("underlying")))
         book = agg.setdefault(key, {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "patas": 0,
-                                    "faltantes": 0})
+                                    "faltantes": 0, "vencimientos": set()})
         for leg in strategy["legs"]:
             units = float(leg["units"]) * contracts
             if leg["kind"] == "stock":
@@ -110,26 +155,14 @@ def portfolio_greeks(
                 missing.append(leg["symbol"])
                 book["faltantes"] += 1
                 continue
-            row = by_symbol.loc[leg["symbol"]]
-            skey = (model, row["underlying"], row["expiration"])
-            if skey not in smiles:
-                part = fit_base.loc[(fit_base["underlying"] == row["underlying"])
-                                    & (fit_base["expiration"] == row["expiration"])]
-                smiles[skey] = fit_smile(part, model, RVSettings(model=model, steps=steps)) if not part.empty else None
-            smile = smiles[skey]
-            if smile is None:
+            row = by_symbol.loc[leg["symbol"]].to_dict()
+            row["symbol"] = leg["symbol"]
+            g = cache.greeks(model, row)
+            if g is None:
                 missing.append(leg["symbol"])
                 book["faltantes"] += 1
                 continue
-            divs = row_dividends(row) or ()
-            try:
-                g = model_greeks(model, float(row["underlying_price"]), float(row["strike"]), float(row["tau"]),
-                                 float(row["risk_free_rate"]), smile.sigma(float(row["strike"])),
-                                 str(row["option_type"]), divs, steps=steps)
-            except ValueError:
-                missing.append(leg["symbol"])
-                book["faltantes"] += 1
-                continue
+            book["vencimientos"].add(row["expiration"])
             scale = 100.0 * units
             book["delta"] += scale * g.delta
             book["gamma"] += scale * g.gamma
@@ -138,6 +171,32 @@ def portfolio_greeks(
             book["patas"] += 1
     rows = [{"modelo": m, "underlying": u, **v} for (m, u), v in agg.items()]
     return pd.DataFrame(rows), missing
+
+
+def pick_gamma_option(chain: pd.DataFrame, underlying: str, exclude: set, keep: str | None = None,
+                      min_dte: int = 14) -> pd.Series | None:
+    """Call ATM del vencimiento más corto con al menos ``min_dte`` días, fuera de ``exclude``.
+
+    Si ``keep`` (la opción que ya se tiene) sigue cotizando, le quedan 7 días y
+    está a menos de 5% del dinero, se la mantiene: rotar a la ATM exacta en cada
+    ciclo pagaría el spread entero.
+    """
+    base = chain.loc[(chain["underlying"] == underlying) & (chain["option_type"] == "c")
+                     & (chain["bid"] > 0) & (chain["ask"] > chain["bid"])]
+    if keep is not None:
+        held = base.loc[base["symbol"] == keep]
+        if not held.empty:
+            row = held.iloc[0]
+            if int(row["dte"]) >= 7 and abs(math.log(float(row["strike"]) / float(row["underlying_price"]))) <= 0.05:
+                return row
+    pool = base.loc[(base["dte"] >= min_dte) & ~base["expiration"].isin(exclude)]
+    if "is_tradable" in pool:
+        pool = pool.loc[pool["is_tradable"]]
+    if pool.empty:
+        return None
+    first = pool.loc[pool["dte"] == pool["dte"].min()]
+    k = (first["strike"] / first["underlying_price"]).map(math.log).abs()
+    return first.loc[k.idxmin()]
 
 
 class DeltaHedger:
@@ -209,52 +268,149 @@ class DeltaHedger:
 
     # -- ciclo ----------------------------------------------------------------
 
-    def hedge_value(self, spots: Mapping[str, float]) -> float:
-        """Valor de mercado de los libros: acciones al spot más el efectivo acumulado."""
+    def _send_option(self, model: str, underlying: str, row: Mapping[str, Any], contracts: int) -> int:
+        """Orden límite marcable por ``contracts`` (con signo) de la opción de cobertura.
+
+        Compra al ask y vende al bid (cruza el spread, como en el backtest); si no
+        llena en ``option_fill_timeout_s`` se cancela. Devuelve los contratos llenados.
+        """
+        if contracts == 0:
+            return 0
+        buy = contracts > 0
+        price = float(row["ask"] if buy else row["bid"])
+        request = LimitOrderRequest(
+            symbol=str(row["symbol"]), qty=abs(int(contracts)),
+            side=OrderSide.BUY if buy else OrderSide.SELL, time_in_force=TimeInForce.DAY,
+            limit_price=round(price, 2), client_order_id=self._order_id(model, underlying),
+        )
+        book_id = f"hedge:{model}:{underlying}"
+        try:
+            snapshot = self.broker.submit(request)
+        except BrokerRejection as exc:
+            self.ledger.record_order(book_id, "hedge_gamma", request, error=exc.message)
+            self.ledger.event("cobertura_rechazada", {"libro": book_id, "opcion": row["symbol"],
+                                                     "contratos": contracts, "error": exc.message})
+            return 0
+        self.ledger.record_order(book_id, "hedge_gamma", request, snapshot)
+        snapshot = wait_for_fill(self.broker, self.ledger, snapshot, self.execution.option_fill_timeout_s,
+                                 self.execution.order_poll_s, self.timing)
+        if not snapshot.is_filled:
+            snapshot = cancel_and_settle(self.broker, self.ledger, snapshot, self.execution.order_poll_s, self.timing)
+        filled = int(math.copysign(snapshot.filled_qty, contracts))
+        if filled:
+            fill = snapshot.filled_avg_price
+            fill = price if fill is None or not math.isfinite(float(fill)) else float(fill)
+            expiration = row.get("expiration")
+            self.ledger.record_hedge_option_fill(model, underlying, str(row["symbol"]),
+                                                 None if expiration is None else str(pd.Timestamp(expiration).date()),
+                                                 filled, fill)
+        return filled
+
+    def _gamma_leg(self, model: str, und: str, g: Mapping[str, Any], chain: pd.DataFrame,
+                   cache: "_SmileCache", flatten: bool) -> tuple[float, dict]:
+        """Ajusta la opción de cobertura del libro. Devuelve la delta que aporta y el detalle."""
+        held = self.ledger.hedge_options(model, und)
+        by_symbol = chain.drop_duplicates("symbol", keep="last").set_index("symbol") if not chain.empty else None
+        detail: dict[str, Any] = {"opcion": None, "n_objetivo_continuo": 0.0, "n_objetivo": 0, "n_operado": 0}
+        keep = held[0]["symbol"] if held else None
+        choice = None if flatten else pick_gamma_option(chain, und, set(g.get("vencimientos", set())), keep,
+                                                        self.settings.min_hedge_dte)
+        g_h = cache.greeks(model, choice.to_dict()) if choice is not None else None
+        target = 0
+        if choice is not None and g_h is not None and g_h.gamma > 1e-12:
+            n_star = -float(g["gamma"]) / (100.0 * g_h.gamma)
+            target = int(min(max(round(n_star), 0), self.settings.max_option_contracts))
+            detail.update(opcion=str(choice["symbol"]), n_objetivo_continuo=n_star, n_objetivo=target)
+            if n_star < -0.5:
+                detail["limitacion"] = "gamma larga: cubrirla exige vender opciones descubiertas"
+        trade_ok = self.settings.mode == "delta_gamma" and not self.dry_run
+        # Rotación o cierre: se venden las opciones que ya no son la elegida.
+        for h in held:
+            if choice is not None and h["symbol"] == choice["symbol"]:
+                continue
+            if by_symbol is None or h["symbol"] not in by_symbol.index:
+                self.ledger.event("cobertura_sin_cotizacion", {"libro": f"{model}:{und}", "opcion": h["symbol"]})
+                continue
+            if trade_ok:
+                row = by_symbol.loc[h["symbol"]].to_dict()
+                row["symbol"] = h["symbol"]
+                detail["n_operado"] += self._send_option(model, und, row, -int(h["contracts"]))
+        current = sum(float(h["contracts"]) for h in self.ledger.hedge_options(model, und)
+                      if choice is not None and h["symbol"] == choice["symbol"])
+        if choice is not None and trade_ok and target != current:
+            detail["n_operado"] += self._send_option(model, und, choice.to_dict(), int(target - current))
+        # Delta de las opciones de cobertura que efectivamente quedaron.
+        delta = 0.0
+        for h in self.ledger.hedge_options(model, und):
+            if by_symbol is None or h["symbol"] not in by_symbol.index:
+                continue
+            row = by_symbol.loc[h["symbol"]].to_dict()
+            row["symbol"] = h["symbol"]
+            gh = cache.greeks(model, row)
+            if gh is not None:
+                delta += 100.0 * float(h["contracts"]) * gh.delta
+        return delta, detail
+
+    def hedge_value(self, spots: Mapping[str, float], quotes: pd.DataFrame | None = None) -> float:
+        """Valor de mercado de los libros: acciones al spot, opciones al mid, más el efectivo acumulado."""
         total = 0.0
         for book in self.ledger.hedge_books():
             spot = spots.get(book["underlying"])
             if spot is None or not math.isfinite(float(spot)):
                 continue
             total += float(book["shares"]) * float(spot) + float(book["cash"])
+        for option in self.ledger.hedge_options():
+            total += float(option["cash"])
+            if quotes is not None and option["symbol"] in quotes.index:
+                q = quotes.loc[option["symbol"]]
+                total += float(option["contracts"]) * 100.0 * 0.5 * (float(q["bid"]) + float(q["ask"]))
         return total
 
     def run(self, strategies: list[Mapping[str, Any]], chain: pd.DataFrame,
             spots: Mapping[str, float], shorting: bool = True, flatten: bool = False) -> pd.DataFrame:
-        """Calcula las griegas, las registra y, en modo ``delta``, rebalancea.
+        """Calcula las griegas, las registra y, según el modo, rebalancea.
 
         Args:
             flatten: Cierra todos los libros (kill-switch o pérdida diaria).
+                Las opciones de cobertura se venden con la cadena que se pase.
 
         Returns:
-            Tabla por libro con griegas, objetivo, posición y acciones operadas.
+            Tabla por libro con griegas, objetivo, posición y lo operado.
         """
         greeks, missing = (pd.DataFrame(), []) if flatten else portfolio_greeks(strategies, chain, self.settings.steps)
+        cache = _SmileCache(chain, self.settings.steps) if not chain.empty else None
         books = {(b["model"], b["underlying"]): b for b in self.ledger.hedge_books()}
-        keys = set(books)
+        keys = set(books) | {(o["model"], o["underlying"]) for o in self.ledger.hedge_options()}
         if not greeks.empty:
             keys |= set(zip(greeks["modelo"], greeks["underlying"]))
         rows = []
         for model, und in sorted(keys):
-            g = (greeks.loc[(greeks["modelo"] == model) & (greeks["underlying"] == und)].iloc[0].to_dict()
-                 if not greeks.empty and ((greeks["modelo"] == model) & (greeks["underlying"] == und)).any()
-                 else {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "patas": 0, "faltantes": 0})
+            mask = ((greeks["modelo"] == model) & (greeks["underlying"] == und)) if not greeks.empty else None
+            g = (greeks.loc[mask].iloc[0].to_dict() if mask is not None and mask.any()
+                 else {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "patas": 0, "faltantes": 0,
+                       "vencimientos": set()})
+            incomplete = bool(g.get("faltantes", 0)) and not flatten
+            gamma_delta, detail = 0.0, {}
+            if self.settings.mode == "delta_gamma" and cache is not None and not incomplete:
+                gamma_delta, detail = self._gamma_leg(model, und, g, chain, cache, flatten)
             current = float(books.get((model, und), {}).get("shares", 0.0))
-            target = 0.0 if flatten else float(-round(g["delta"]))
+            target = 0.0 if flatten else float(-round(g["delta"] + gamma_delta))
             target = max(-self.settings.max_shares, min(self.settings.max_shares, target))
             trade = target - current
             action = "sin_cambio"
-            if g.get("faltantes", 0) and not flatten:
+            if incomplete:
                 action = "faltan_patas"
             elif abs(trade) > 0 and (abs(trade) >= self.settings.band_shares or target == 0):
                 action = "rebalanceo"
             done = 0.0
             spot = float(spots.get(und, float("nan")))
-            if action == "rebalanceo" and self.settings.mode == "delta" and not self.dry_run:
+            if action == "rebalanceo" and self.settings.mode in ("delta", "delta_gamma") and not self.dry_run:
                 done = self._trade(model, und, trade, spot, shorting)
-            rows.append({"modelo": model, "underlying": und, **{k: g[k] for k in ("delta", "gamma", "vega", "theta")},
+            rows.append({"modelo": model, "underlying": und,
+                         **{k: g[k] for k in ("delta", "gamma", "vega", "theta")},
                          "patas": g.get("patas", 0), "faltantes": g.get("faltantes", 0),
-                         "objetivo": target, "posicion": current, "accion": action, "operado": done})
+                         "delta_opcion_cobertura": gamma_delta, "objetivo": target, "posicion": current,
+                         "accion": action, "operado": done, **{f"gamma_{k}": v for k, v in detail.items()}})
         table = pd.DataFrame(rows)
         if not table.empty:
             self.ledger.event("griegas_portafolio", {"libros": table.to_dict(orient="records"),

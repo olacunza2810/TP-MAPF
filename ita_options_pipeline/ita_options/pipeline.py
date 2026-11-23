@@ -319,9 +319,12 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Edge neto mínimo por estructura, en USD.")
     paper.add_argument("--fill-timeout", type=float, default=60.0,
                        help="Segundos que una orden mleg de apertura espera el fill antes de cancelarse.")
-    paper.add_argument("--hedge", choices=["none", "delta"], default="none",
+    paper.add_argument("--hedge", choices=["none", "delta", "delta_gamma"], default="none",
                        help="Cobertura con griegas (Parte 2): none sólo registra las griegas del portafolio; "
-                            "delta cubre cada libro (modelo y subyacente) con acciones.")
+                            "delta cubre cada libro (modelo y subyacente) con acciones; delta_gamma además "
+                            "compra la call ATM corta para cubrir la gamma (sólo compras, contratos enteros).")
+    paper.add_argument("--hedge-max-contracts", type=int, default=5,
+                       help="Tope de contratos de la opción de cobertura de gamma por libro.")
     paper.add_argument("--hedge-band", type=float, default=10.0,
                        help="Desvío mínimo en acciones entre objetivo y posición para rebalancear la delta.")
     paper.add_argument("--hedge-max-shares", type=float, default=1000.0,
@@ -548,7 +551,8 @@ def _run_paper(args: argparse.Namespace) -> None:
 
         hedger = DeltaHedger(broker, ledger,
                              HedgeSettings(mode=args.hedge, band_shares=args.hedge_band,
-                                           max_shares=args.hedge_max_shares),
+                                           max_shares=args.hedge_max_shares,
+                                           max_option_contracts=args.hedge_max_contracts),
                              settings, dry_run=not args.live)
     runner = LiveRunner(
         broker, AlpacaMarketData(config, settings), ledger, settings,

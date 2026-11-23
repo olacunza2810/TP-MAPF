@@ -92,3 +92,13 @@ def test_los_costos_incluyen_rebalanceo_cambio_de_simbolo_y_desarme() -> None:
 
 def test_efectividad() -> None:
     assert effectiveness([1, -1, 1, -1], [2, -2, 2, -2]) == pytest.approx(0.75)
+
+
+def test_la_version_entera_redondea_y_solo_compra() -> None:
+    opt = bs_greeks(100, 100, 0.15, R, SIG, "c")
+    hed = bs_greeks(100, 100, 0.05, R, SIG, "c")
+    n_short, _ = hedge_quantities("delta_gamma_entera", -1.0, opt, hed)   # vendido: gamma negativa
+    n_cont, _ = hedge_quantities("delta_gamma", -1.0, opt, hed)
+    assert n_short == float(max(round(n_cont), 0)) and n_short >= 0
+    n_long, h_long = hedge_quantities("delta_gamma_entera", +1.0, opt, hed)  # comprado: habría que vender
+    assert n_long == 0.0 and h_long == pytest.approx(-100 * opt.delta)

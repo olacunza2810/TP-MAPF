@@ -16,6 +16,10 @@ Para una posición de :math:`q` contratos de una opción :math:`O` (multiplicado
   :math:`h = -100\,(q\,\Delta_O + n\,\Delta_H)`.
 - **Delta-vega** (opción ATM larga + acción): igual, con
   :math:`n = -q\,\mathcal V_O/\mathcal V_H`.
+- **Delta-gamma entera**: la versión que se puede ejecutar en la cuenta,
+  :math:`n = \max(\mathrm{round}(-q\,\Gamma_O/\Gamma_H), 0)`: contratos
+  enteros y sólo compras (con nivel 3 de opciones no se puede vender una opción
+  descubierta). Es la que corre en paper con ``--hedge delta_gamma``.
 
 La opción para la gamma es la ATM del vencimiento más corto (más gamma por
 dólar); la de la vega, la ATM del más largo (más vega por dólar de gamma). En
@@ -72,8 +76,10 @@ __all__ = [
     "effectiveness_table",
 ]
 
-Strategy = Literal["sin_cobertura", "delta", "delta_gamma", "delta_vega"]
-STRATEGIES: tuple[Strategy, ...] = ("sin_cobertura", "delta", "delta_gamma", "delta_vega")
+Strategy = Literal["sin_cobertura", "delta", "delta_gamma", "delta_gamma_entera", "delta_vega"]
+STRATEGIES: tuple[Strategy, ...] = ("sin_cobertura", "delta", "delta_gamma", "delta_gamma_entera", "delta_vega")
+#: Opción de cobertura que usa cada estrategia (las dos de gamma comparten la ATM corta).
+INSTRUMENT = {"delta_gamma": "delta_gamma", "delta_gamma_entera": "delta_gamma", "delta_vega": "delta_vega"}
 MULTIPLIER = 100.0
 
 
@@ -107,13 +113,15 @@ def hedge_quantities(strategy: Strategy, q: float, g_opt: Greeks, g_hedge: Greek
     if strategy == "sin_cobertura":
         return 0.0, 0.0
     n = 0.0
-    if strategy in ("delta_gamma", "delta_vega"):
+    if strategy in INSTRUMENT:
         if g_hedge is None:
             raise ValueError(f"{strategy} necesita una opción de cobertura.")
-        target, hedge = (g_opt.gamma, g_hedge.gamma) if strategy == "delta_gamma" else (g_opt.vega, g_hedge.vega)
+        target, hedge = (g_opt.vega, g_hedge.vega) if strategy == "delta_vega" else (g_opt.gamma, g_hedge.gamma)
         if abs(hedge) < 1e-12:
             raise ValueError("La opción de cobertura no tiene exposición a la griega a cubrir.")
         n = -q * target / hedge
+        if strategy == "delta_gamma_entera":
+            n = float(max(round(n), 0))
     h = -MULTIPLIER * (q * g_opt.delta + (n * g_hedge.delta if g_hedge is not None else 0.0))
     return n, h
 
@@ -177,7 +185,7 @@ def simulate_position(path: PositionPath, model: str, strategy: Strategy, q: flo
     steps = len(path.days) - 1
     for i in range(steps):
         g_opt = path.greeks[model][i]
-        hedge = path.hedges.get(strategy, [None] * steps)[i] if strategy in ("delta_gamma", "delta_vega") else None
+        hedge = path.hedges[INSTRUMENT[strategy]][i] if strategy in INSTRUMENT else None
         g_h = hedge["greeks"][model] if hedge is not None else None
         n, h = hedge_quantities(strategy, q, g_opt, g_h)
         S0, S1 = path.spot[i], path.spot[i + 1]
@@ -185,7 +193,7 @@ def simulate_position(path: PositionPath, model: str, strategy: Strategy, q: flo
         cost = abs(h - h_prev) * S0 * costs.stock_cost_bps * 1e-4
         if hedge is not None:
             per_contract = MULTIPLIER * hedge["half"] + costs.option_commission
-            if sym_prev == hedge["symbol"]:
+            if sym_prev == hedge["symbol"] or (n == 0 and n_prev == 0):
                 cost += abs(n - n_prev) * per_contract
             else:
                 cost += abs(n) * per_contract

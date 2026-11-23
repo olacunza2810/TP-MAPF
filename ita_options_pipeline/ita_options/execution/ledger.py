@@ -91,6 +91,17 @@ CREATE TABLE IF NOT EXISTS hedges (
     cash REAL NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hedge_options (
+    book TEXT NOT NULL,
+    model TEXT NOT NULL,
+    underlying TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    expiration TEXT,
+    contracts REAL NOT NULL DEFAULT 0,
+    cash REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (book, symbol)
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -338,6 +349,8 @@ class Ledger:
         # Acciones de los libros de cobertura con griegas (Parte 2, paso 4).
         for book in self.hedge_books():
             expected[book["underlying"]] = expected.get(book["underlying"], 0.0) + float(book["shares"])
+        for option in self.hedge_options():
+            expected[option["symbol"]] = expected.get(option["symbol"], 0.0) + float(option["contracts"])
         return {symbol: qty for symbol, qty in expected.items() if abs(qty) > 1e-9}
 
     # -- coberturas -----------------------------------------------------------
@@ -362,6 +375,28 @@ class Ledger:
             " VALUES (?,?,?,?,?,?)",
             (book["book"], model, underlying, float(book["shares"]) + shares,
              float(book["cash"]) - shares * price, _utcnow()),
+        )
+        self._conn.commit()
+
+    def hedge_options(self, model: str | None = None, underlying: str | None = None) -> list[dict[str, Any]]:
+        """Opciones de cobertura (gamma) con contratos distintos de cero."""
+        rows = self._conn.execute("SELECT * FROM hedge_options WHERE contracts != 0 ORDER BY book, symbol").fetchall()
+        out = [dict(row) for row in rows]
+        return [r for r in out if (model is None or r["model"] == model)
+                and (underlying is None or r["underlying"] == underlying)]
+
+    def record_hedge_option_fill(self, model: str, underlying: str, symbol: str, expiration: str | None,
+                                 contracts: float, price: float) -> None:
+        """Suma un fill de ``contracts`` (con signo) de la opción de cobertura, a ``price`` por acción."""
+        book = f"{model}:{underlying}"
+        row = self._conn.execute("SELECT contracts, cash FROM hedge_options WHERE book = ? AND symbol = ?",
+                                 (book, symbol)).fetchone()
+        held, cash = (float(row["contracts"]), float(row["cash"])) if row else (0.0, 0.0)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO hedge_options (book, model, underlying, symbol, expiration, contracts,"
+            " cash, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (book, model, underlying, symbol, expiration, held + contracts,
+             cash - contracts * price * 100.0, _utcnow()),
         )
         self._conn.commit()
 

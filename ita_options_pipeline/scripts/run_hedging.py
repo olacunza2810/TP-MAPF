@@ -12,7 +12,8 @@ Experimento
   (binomial y Black-Scholes, dividendo discreto escrowed), calculadas con la
   sonrisa del propio modelo ajustada en esa foto: sin cobertura, delta con
   acciones, delta-gamma con la call ATM del vencimiento más corto y delta-vega
-  con la call ATM del más largo (ver :mod:`ita_options.hedging`). La opción
+  con la call ATM del más largo, y delta-gamma entera (la de paper: contratos
+  enteros, sólo compras). Ver :mod:`ita_options.hedging`. La opción
   de cobertura se mantiene mientras siga a menos de 5% del dinero en el mismo
   vencimiento: rotarla todos los días a la ATM exacta paga el spread entero.
 - **P&L.** A mids observados, con el spot implícito de cada foto (el cierre de
@@ -331,14 +332,15 @@ def plot(table: pd.DataFrame, out: Path) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    order = ["delta", "delta_gamma", "delta_vega"]
+    order = ["delta", "delta_gamma", "delta_gamma_entera", "delta_vega"]
     labels = {"delta": "Delta\n(acción)", "delta_gamma": "Delta-gamma\n(ATM corta + acción)",
+              "delta_gamma_entera": "Delta-gamma entera\n(sólo compras, paper)",
               "delta_vega": "Delta-vega\n(ATM larga + acción)"}
     colors = {"crr": "#2a78d6", "bsm": "#eb6834"}
     names = {"crr": "Binomial (CRR)", "bsm": "Black-Scholes"}
     plt.rcParams.update({"font.size": 9, "axes.edgecolor": INK2, "axes.labelcolor": INK2,
                          "xtick.color": INK2, "ytick.color": INK2})
-    fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), sharey=True, facecolor=SURFACE)
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 3.9), sharey=True, facecolor=SURFACE)
     x = np.arange(len(order))
     for ax, col, title in zip(axes, ("efectividad", "efectividad_neta"),
                               ("Bruta (a mids)", "Neta de costos de rebalanceo")):
