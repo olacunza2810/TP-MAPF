@@ -40,9 +40,14 @@ Salida::
     data/dolthub/rates.parquet              tasa ^IRX diaria (decimal)
     data/dolthub/manifest.json              qué se pidió, qué llegó y cuándo
 
+Cobertura de la base: desde enero de 2020. Hasta 2025 la foto es de lunes,
+miércoles y viernes; en 2026 es diaria. RTX cotiza opciones desde la fusión
+con Raytheon (abril de 2020); antes, la base trae UTX y RTN, que no se usan.
+
 Uso (desde ``ita_options_pipeline``; sólo librería estándar más pandas)::
 
     python scripts/download_dolthub.py --start 2026-03-02 --end 2026-11-20
+    python scripts/download_dolthub.py --start 2020-01-02 --end 2026-11-20 --data-root data_hist --workers 10
     python scripts/download_dolthub.py --start 2026-03-02 --end 2026-11-20 --steps build
 """
 
@@ -306,6 +311,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--max-dte", type=int, default=200, help="Vencimientos hasta N días corridos.")
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--steps", nargs="+", choices=ALL_STEPS, default=list(ALL_STEPS))
+    parser.add_argument("--data-root", default=str(DATA),
+                        help="Carpeta de datos (por defecto data/); la historia 2020-2026 va en data_hist/.")
     return parser.parse_args(argv)
 
 
@@ -313,6 +320,8 @@ def main(argv: list[str] | None = None) -> None:
     """Punto de entrada."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = _parse_args(argv)
+    global DATA
+    DATA = Path(args.data_root)
     calendar: list[date] = []
     if "yahoo" in args.steps:
         calendar = download_yahoo(args.tickers, args.start, args.end)
