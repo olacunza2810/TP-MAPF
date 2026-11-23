@@ -1,0 +1,120 @@
+{
+  "spot": "underlying_price",
+  "ruedas": 181,
+  "contratos": 36562,
+  "contratos_itm": 21443,
+  "eep_media_usd": 0.21458009086156743,
+  "pct_eep_mayor_medio_spread": 0.003911164597122696,
+  "pct_eep_mayor_medio_spread_itm": 0.003217833325560789,
+  "dentro_crr": 0.8015152343963678,
+  "dentro_bsm": 0.7962638805316996,
+  "dentro_crr_itm": 0.787016742060346,
+  "dentro_bsm_itm": 0.7772233362869001,
+  "dentro_crr_q": 0.7987801542585198,
+  "dentro_crr_q_itm": 0.7838455440003731,
+  "pct_bsm_bajo_intrinseco_itm": 0.22809308399011333,
+  "efecto_div_abs_medio_usd": 0.081733804195784,
+  "dm_total": [
+    {
+      "comparacion": "bsm vs crr",
+      "contratos": 36562,
+      "perdida": "L",
+      "T": 181,
+      "d_medio": 0.015430255534379819,
+      "dm": 4.004549891416198,
+      "p_valor": 9.077270336246634e-05,
+      "grupo": "total",
+      "en_ajuste": NaN,
+      "option_type": NaN,
+      "dinero": NaN,
+      "fecha_ex": NaN,
+      "underlying": NaN
+    },
+    {
+      "comparacion": "bsm vs crr",
+      "contratos": 36562,
+      "perdida": "L2",
+      "T": 181,
+      "d_medio": -0.43681573107396954,
+      "dm": -0.6210918325346076,
+      "p_valor": 0.5353249121005884,
+      "grupo": "total",
+      "en_ajuste": NaN,
+      "option_type": NaN,
+      "dinero": NaN,
+      "fecha_ex": NaN,
+      "underlying": NaN
+    },
+    {
+      "comparacion": "crr_q vs crr",
+      "contratos": 36562,
+      "perdida": "L",
+      "T": 181,
+      "d_medio": 0.004683390814984566,
+      "dm": 2.0627808773099225,
+      "p_valor": 0.04056948777692231,
+      "grupo": "total",
+      "en_ajuste": NaN,
+      "option_type": NaN,
+      "dinero": NaN,
+      "fecha_ex": NaN,
+      "underlying": NaN
+    },
+    {
+      "comparacion": "crr_q vs crr",
+      "contratos": 36562,
+      "perdida": "L2",
+      "T": 181,
+      "d_medio": -0.1314926288525754,
+      "dm": -0.40210136632097415,
+      "p_valor": 0.6880864903810354,
+      "grupo": "total",
+      "en_ajuste": NaN,
+      "option_type": NaN,
+      "dinero": NaN,
+      "fecha_ex": NaN,
+      "underlying": NaN
+    }
+  ],
+  "universo_estrategia": {
+    "contratos": 14189,
+    "brecha_crr_bsm_mediana_usd_contrato": 3.622137817537663,
+    "brecha_crr_bsm_p90_usd_contrato": 29.20246991067701,
+    "pct_brecha_crr_bsm_mayor_10usd": 0.2998801888787089,
+    "pct_brecha_crr_crrq_mayor_10usd": 0.11642821904292057,
+    "pct_eep_mayor_medio_spread": 0.0035943336387342308,
+    "pct_bsm_bajo_intrinseco": 0.004299104940446825,
+    "sesgo_usd_contrato": {
+      "c_ATM": {
+        "crr": -20.140837952591973,
+        "bsm": -20.21153385400524,
+        "crr_q": -22.315371471278606
+      },
+      "c_ITM": {
+        "crr": -33.224852276422304,
+        "bsm": -40.60440994382714,
+        "crr_q": -41.48526281678111
+      },
+      "c_OTM": {
+        "crr": -0.8760310552645832,
+        "bsm": -0.28922454878202947,
+        "crr_q": -0.7070088654725161
+      },
+      "p_ATM": {
+        "crr": 14.34071575338318,
+        "bsm": 8.676131693093886,
+        "crr_q": 13.582433553917925
+      },
+      "p_ITM": {
+        "crr": 25.97138075808509,
+        "bsm": -2.5347714574329867,
+        "crr_q": 19.575143595074334
+      },
+      "p_OTM": {
+        "crr": -0.5923266799379999,
+        "bsm": -0.6571391386619568,
+        "crr_q": -0.3528297174814741
+      }
+    }
+  }
+}

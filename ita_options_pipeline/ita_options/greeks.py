@@ -61,6 +61,7 @@ __all__ = [
     "pv_dividends",
     "bs_greeks",
     "crr_greeks",
+    "crr_price",
     "model_greeks",
 ]
 
@@ -256,6 +257,46 @@ def crr_greeks(
     vega = (price(sigma + vol_bump, rate) - price(max(sigma - vol_bump, 1e-4), rate)) / (2 * vol_bump)
     rho = (price(sigma, rate + rate_bump) - price(sigma, rate - rate_bump)) / (2 * rate_bump)
     return Greeks(v0, delta, gamma, vega, theta, rho)
+
+
+def crr_price(
+    spot: float, strike: float, tau: float, rate: float, sigma: float, flag: OptionFlag,
+    dividends: Dividends = (), steps: int = 100, american: bool = True,
+) -> float:
+    r"""Sólo el precio del árbol CRR escrowed (sin griegas), para valuar en masa.
+
+    Es el mismo árbol que :func:`crr_greeks`, con :math:`D(t_n)` precalculado
+    para todos los pasos: en el backtest y en la inversión de la volatilidad se
+    llama decenas de miles de veces.
+    """
+    if tau <= 0 or sigma <= 0:
+        return max(spot - strike, 0.0) if flag == "c" else max(strike - spot, 0.0)
+    dt = tau / steps
+    times = np.arange(steps + 1) * dt
+    pv = np.zeros(steps + 1)
+    for ti, di in dividends:
+        if 0 < ti <= tau:
+            pv += np.where(times < ti, di * np.exp(-rate * (ti - times)), 0.0)
+    s_star0 = spot - pv[0]
+    if s_star0 <= 0:
+        raise ValueError("Los dividendos superan al spot: S* = S - D no es positivo.")
+    u = math.exp(sigma * math.sqrt(dt))
+    d = 1.0 / u
+    growth = math.exp(rate * dt)
+    p = (growth - d) / (u - d)
+    if not 0.0 < p < 1.0:
+        raise ValueError("Parametrización CRR inválida: subir steps o revisar sigma.")
+    disc_p, disc_q = p / growth, (1 - p) / growth
+    sign = 1.0 if flag == "c" else -1.0
+    j = np.arange(steps + 1)
+    log_u = math.log(u)
+    values = np.maximum(sign * (s_star0 * np.exp(log_u * (steps - 2 * j)) - strike), 0.0)
+    for n in range(steps - 1, -1, -1):
+        values = disc_p * values[:-1] + disc_q * values[1:]
+        if american:
+            spots = s_star0 * np.exp(log_u * (n - 2 * j[: n + 1])) + pv[n]
+            np.maximum(values, sign * (spots - strike), out=values)
+    return float(values[0])
 
 
 def model_greeks(

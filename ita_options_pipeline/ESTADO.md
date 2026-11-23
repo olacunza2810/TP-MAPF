@@ -1,6 +1,6 @@
 # Estado del proyecto — Grupo 3 (Defensa / ITA)
 
-Última actualización: 23 de noviembre de 2026. Rama `correcciones-parte1`.
+Última actualización: 23 de noviembre de 2026. Rama `main`.
 Subyacentes: **RTX**, **BA** y **LMT**.
 
 ## Cómo correrlo
@@ -20,6 +20,8 @@ python scripts/download_dolthub.py --start 2026-03-02 --end 2026-11-20   # ~20 m
 python scripts/run_dolthub_analysis.py --out reportes_dolthub
 python scripts/run_calibration.py --out reportes_dolthub
 python scripts/run_rv_sensitivity.py --out reportes_dolthub
+python scripts/run_model_comparison.py                       # Parte 2, paso 3 (~2 min)
+python scripts/run_model_comparison.py --spot underlying_price   # robustez con el cierre
 ```
 
 ## Estado por etapa de la consigna
@@ -37,12 +39,35 @@ python scripts/run_rv_sensitivity.py --out reportes_dolthub
 | Monitoreo y stop-loss | Loop de rueda completa con reconciliación, kill-switch, pérdida diaria y corte manual |
 | AI log | `../AI_LOG.md` (cada integrante agrega sus interacciones) |
 
+## Parte 2
+
+| Paso | Estado |
+|---|---|
+| 1. Competencia CRR vs BSM en paper | `--strategy rv_compite`; vivo = backtest verificado sobre datos reales |
+| 2. Griegas de los dos modelos | `ita_options/greeks.py`, dividendo discreto escrowed; Hull 4,44 reproducido |
+| 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
+| 4. Cobertura con griegas | pendiente |
+| 5. Monte Carlo de estrés | pendiente |
+| 6. Scorecard, informe y presentación | pendiente |
+
+Paso 3, en una línea por resultado (spot implícito, 181 ruedas, 36.515 contratos):
+
+- Diebold-Mariano en medios spreads: el binomial erra menos que BS
+  (d medio = 0,037, DM = 13,1); en las OTM del ajuste no hay diferencia
+  (p = 0,54); en calls sin fecha ex tampoco (p = 0,53, Merton 1973).
+- La prima de ejercicio supera medio spread en 0,3% de los contratos: el modelo
+  casi nunca cambia si un precio cae dentro del bid-ask (98,1% CRR, 97,6% BS).
+- En el universo de la estrategia (|k| <= 10%, 21-75 días) la brecha CRR-BS
+  supera los USD 10 por contrato en 30% de los casos; BS subvalúa las puts ITM
+  en USD 19 por contrato en promedio.
+- Dividendo discreto contra yield continuo: el escrowed erra menos (DM = 6,1); el
+  yield continuo subvalúa calls ITM en USD 16 por contrato. Decisión pendiente:
+  pasar la estrategia RV al árbol escrowed.
+
 ## Pendiente
 
 - Correr `paper-run` en cada rueda y sumar el P&L acumulado al informe.
-- Presentación de la Parte 2 con los números de este informe (`check_informe.py`
-  los valida).
-- Parte 2: Black-Scholes en producción contra el binomial, greeks y Monte Carlo.
+- Pasos 4 a 6 de la Parte 2.
 
 ## Paper trading: corrida diaria
 
