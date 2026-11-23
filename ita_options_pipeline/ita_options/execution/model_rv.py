@@ -81,7 +81,8 @@ class RVSettings:
             estructura: una señal que es más chica que el spread es ruido.
         max_leg_spread_rel: Spread relativo máximo de cada pata.
         min_fit_points: Opciones fuera del dinero mínimas para ajustar la sonrisa.
-        steps: Pasos del árbol CRR.
+        steps: Pasos del árbol CRR. 100, igual que en el backtest y en la
+            calibración: lo que se opera tiene que ser lo que se validó.
         max_signals: Señales devueltas por llamada.
     """
 
@@ -94,7 +95,7 @@ class RVSettings:
     min_edge_to_width: float = 0.25
     max_leg_spread_rel: float = 0.25
     min_fit_points: int = 5
-    steps: int = 150
+    steps: int = 100
     max_signals: int = 2
 
 
@@ -283,8 +284,11 @@ def detect_model_rv(
     base = base.loc[base["dte"].between(settings.min_dte, settings.max_dte)]
     signals: list[dict[str, object]] = []
     for (_, _), slice_ in base.groupby(["underlying", "expiration"]):
-        smile = fit_smile(chain.loc[(chain["underlying"] == slice_["underlying"].iloc[0])
-                                    & (chain["expiration"] == slice_["expiration"].iloc[0])],
+        # La sonrisa se ajusta sólo con contratos explotables, como en el backtest:
+        # una cotización vieja o sin bid no debe torcer el precio de referencia.
+        fit_base = chain.loc[chain["is_tradable"]] if "is_tradable" in chain else chain
+        smile = fit_smile(fit_base.loc[(fit_base["underlying"] == slice_["underlying"].iloc[0])
+                                       & (fit_base["expiration"] == slice_["expiration"].iloc[0])],
                           settings.model, settings)
         if smile is None:
             continue

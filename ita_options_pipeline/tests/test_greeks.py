@@ -97,3 +97,20 @@ def test_call_en_el_dinero_antes_de_la_fecha_ex_tiene_prima_de_ejercicio() -> No
     american = crr_greeks(560, 500, 30 / 365, 0.04, 0.25, "c", divs, steps=600).price
     european = bs_greeks(560, 500, 30 / 365, 0.04, 0.25, "c", divs).price
     assert american - european > 1.0
+
+
+def test_ejemplo_de_hull_put_americana_con_dividendo_discreto() -> None:
+    """Hull, Options, Futures and Other Derivatives: árbol de 5 pasos con dividendo conocido.
+
+    S0 = 52, K = 50, r = 10%, sigma = 40%, T = 5 meses, dividendo de 2,06 en 3,5
+    meses. El libro da USD 4,44 para la put americana.
+    """
+    g = crr_greeks(52, 50, 5 / 12, 0.10, 0.40, "p", [(3.5 / 12, 2.06)], steps=5)
+    assert g.price == pytest.approx(4.44, abs=0.005)
+
+
+def test_casos_degenerados_fallan_con_mensaje() -> None:
+    with pytest.raises(ValueError, match="3 pasos"):
+        crr_greeks(S, K, T, R, SIG, "c", steps=2)
+    with pytest.raises(ValueError, match="no es positivo"):
+        crr_greeks(10, 10, T, R, SIG, "c", [(0.5, 12.0)])

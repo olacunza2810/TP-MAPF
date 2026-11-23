@@ -146,3 +146,33 @@ def test_competencia_alterna_la_prioridad_entre_modelos() -> None:
 
     priorities = [json.loads(e["payload_json"])["prioridad"] for e in ledger.events("senales_por_modelo")]
     assert priorities == ["crr", "bsm"]
+
+
+def test_loop_en_vivo_con_los_dos_modelos_compitiendo(tmp_path) -> None:
+    """De punta a punta: la competencia abre estructuras atribuidas a cada modelo y reconcilia."""
+    from ita_options.execution.model_rv import CompetingModels
+
+    # Vencimiento a 43 días (dentro de la ventana 21-75) y spread angosto: el filtro en
+    # vivo deja operables las alas OTM, que son las que ajustan la sonrisa.
+    chain = build_chain(expiries=(("2026-10-16", 43 / 365),), spread=0.20)
+    broker = FakeBroker()
+    broker.next_close = pd.Timestamp("2026-09-03 20:00", tz="UTC")
+    clock = SimTime()
+    settings = ExecutionSettings(kill_file=tmp_path / "KILL", order_poll_s=1.0, max_open_strategies=6,
+                                 min_edge_usd=5.0, max_dte=75)
+    ledger = Ledger()
+    source = CompetingModels(
+        ledger, ExecutionCosts(min_net_edge=5.0),
+        {m: RVSettings(model=m, min_edge_usd=5.0, moneyness_band=0.2, max_signals=3) for m in ("crr", "bsm")},
+        cap_per_model=2,
+    )
+    runner = LiveRunner(broker, FakeMarket([chain]), ledger, settings, dry_run=False,
+                        report_dir=tmp_path / "rep", timing=Timing(sleep=clock.sleep, now=clock.now),
+                        now=lambda: pd.Timestamp("2026-09-03 15:00", tz="UTC"), signal_source=source)
+    report = runner.run_cycle()
+    opened = runner.ledger.strategies(states=["open"])
+    assert report.entries_opened == len(opened) > 0
+    models = {source.model_of(s["detector"]) for s in opened}
+    assert models <= {"crr", "bsm"} and len(models) == 2
+    assert all(sum(1 for s in opened if source.model_of(s["detector"]) == m) <= 2 for m in models)
+    assert reconcile(runner.ledger, broker).ok

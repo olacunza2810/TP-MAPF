@@ -172,6 +172,10 @@ def _crr_tree(
 ) -> tuple[float, tuple[float, float], tuple[float, float, float],
            tuple[float, float], tuple[float, float, float], float]:
     """Árbol CRR sobre :math:`S^*`; devuelve valores y spots de los pasos 0, 1 y 2."""
+    if steps < 3:
+        raise ValueError("El árbol necesita al menos 3 pasos para sacar las griegas de sus nodos.")
+    if spot - pv_dividends(dividends, rate, tau) <= 0:
+        raise ValueError("Los dividendos superan al spot: S* = S - D no es positivo.")
     dt = tau / steps
     u = math.exp(sigma * math.sqrt(dt))
     d = 1.0 / u
