@@ -195,3 +195,201 @@ by hand each session.
 - to keep the hyperparameter grid declared before seeing results, and to
   report the sensitivity with more orders per session as exploratory and post
   hoc.
+
+### 3.4 Final check and merge into `main`
+
+**Prompts:**
+
+> Perfecto, necesito que ahora corrobores x ultima vez si se hcieron las
+> correcciones que nos dijo el profesor: [devolución repetida]
+
+> Si, pushealo.
+
+> Hacelo vos, quiero que sea el main a partir de ahora.
+
+**Response (summary):** it went through the seven points again against the
+code and the report, ran the tests and `check_informe.py`, pushed the branch
+and made it `main`.
+
+**Why we delegated:** a last cross-check before the corrected version became
+the reference for the rest of the semester.
+
+---
+
+## Session 4 — 23 November 2026: Part 2 (Black-Scholes, Greeks and Monte Carlo)
+
+Same conversation, in the project "MAPF - Algo Trading & Arbitraje" (Octavio, Claude).
+
+### 4.1 Reading the brief and the class material, and the plan
+
+**Prompts:**
+
+> Bueno ahora arrancamos con la parte 2. Quiero que me hables en castellano.
+> Primero vas a leer la consigna de lo que pide para la parte 2 que es el PDF
+> q esta en el contexto del proyecto. Y luego cuando termines de leer eso, te
+> vas a meter en la carpeta "TP-MAPF-correcciones" y dentro de esa carpeta vas
+> a encontrar otra carpeta que se llama "material_de_clase_parte2" [...]
+
+> Despreoucpate de eso por ahora. Armemos bien la parte 2 y luego vemos como
+> hacemos con el tiempo que quede para ver cuantas ruedas llegamos a acumular.
+> Comencemos con el plan
+
+> 1. Lo que mas se acerque a los que dice la consigna. 2. Lo que mas se
+> acerque a los que dice la consigna.
+
+> Dale, primero quiero dejar todo listo y bien hecho y despues lo ponemos a
+> correr todo junto.
+
+**Response (summary):** it read the brief and the class material (stochastic
+processes, Black-Scholes, Greeks, delta-hedging simulators) and proposed a
+six-step plan. The two decisions it asked us about were answered with "as
+close to the brief as possible":
+
+- the binomial and Black-Scholes compete in the same paper account;
+- Greek hedging runs live: delta with stock, and gamma with options.
+
+**Why we delegated:** turning the brief into a step-by-step plan that reuses
+the Part 1 pipeline. The scope and the two decisions were ours.
+
+### 4.2 Steps 1 and 2: Black-Scholes in production and Greeks for both models
+
+**Response (summary):**
+
+- `CompetingModels`: both models propose structures in the same cycle, with a
+  cap of 3 open structures per model and duplicates executed only once.
+- `greeks.py`: Black-Scholes and the CRR tree with the same escrowed discrete
+  dividend; tree Greeks taken from its nodes. It found a sign error in the put
+  of the class Greeks table.
+
+**Verification prompt:**
+
+> Dale, pero primero quiero que corrobores que el paso 1 y 2 esten bien
+> hechos.
+
+**Response (summary):**
+
+- It reproduced Hull's American put with a discrete dividend (4.4404 against
+  4.44).
+- It checked that the live loop and the backtest value the 26 August chain
+  identically (maximum difference 0).
+- It fixed two inconsistencies: the live smile used non-tradable rows, and
+  the tree used 150 steps against 100 in the backtest.
+
+### 4.3 Step 3: Black-Scholes against the binomial
+
+**Prompts:**
+
+> Dale, segui con el paso 3.
+
+> [sobre "Recomiendo hacerlo: es el tratamiento que los datos respaldan y el
+> que pidió la devolución del profesor."] Entonces, hacelo.
+
+**Response (summary):**
+
+- **Comparison** over 181 sessions and 36,515 contracts: early-exercise
+  premium, repricing and a Diebold-Mariano test with Newey-West and HLN.
+- **Results:** the binomial wins ($DM^* = 13.1$) where theory predicts, but
+  the premium exceeds half the spread in only 0.3% of contracts.
+- **Dividend treatment:** it added a third model (the tree with a continuous
+  yield). The escrowed tree did better ($DM^* = 6.1$).
+- **Change we approved:** the strategy moved to the escrowed tree (live,
+  backtest and calibration). It recalculated the Part 1 numbers and updated
+  the report; no conclusion changed.
+
+**Why we delegated:** the statistical design and the computation. The
+decision to change the pricer in production was ours, with the evidence in
+front of us.
+
+### 4.4 Step 4: Greek strategies
+
+**Prompts:**
+
+> Dale, segui con el paso 4.
+
+> [sobre "Si igual la querés ejecutando, la habilito solo para compras de
+> opciones"] Lo que mas se acerque a lo que pida la consigna.
+
+**Response (summary):**
+
+- **Hedging backtest** on DoltHub (1,749 positions, 3,272 position-days):
+  - delta, delta-gamma and delta-vega, each with the Greeks of each model;
+  - net effectiveness: delta 95%, delta-gamma 79%, delta-vega 63%;
+  - the Greeks of the two models gave equivalent hedges.
+- **Live hedger**, one book per model and underlying:
+  - delta with stock, using a band;
+  - gamma with the short-dated ATM call, in whole contracts and buys only,
+    because options level 3 doesn't allow uncovered sales;
+  - the books enter reconciliation and the daily loss, and the kill-switch
+    closes them.
+
+We chose to run delta-gamma in paper because the brief asks for the Greeks
+in production, even though the backtest recommends delta.
+
+### 4.5 Step 5: Monte Carlo stress test
+
+**Prompt:**
+
+> Dale, vamos con el paso 5.
+
+**Response (summary):** a stress test of the book in production with:
+
+- correlated GBM, Heston and Merton (calibrated and stressed);
+- spreads tripled;
+- deterministic shocks, and replays of COVID and of the April 2025 tariffs.
+
+For calibration it used 10 years of Yahoo prices, downloaded on our machine,
+and the ATM IV from DoltHub. It found:
+
+- **Heston in the class notebook:** it diffuses the price with `Var[-1]`, so
+  the stochastic volatility never reaches the price.
+- **A production bug:** the live kill-switch and daily loss were measured at
+  liquidation value. Every new structure would have been closed in the first
+  cycle. They are now measured at the mid, as the backtest already did, and a
+  regression test covers it.
+
+**Why we delegated:** the simulation engine and the vectorised tree. The
+stress assumptions (persistent mispricing, the volatility response in the
+historical replays) are written down in the report as assumptions, not as
+results.
+
+### 4.6 Verification of steps 3 to 5
+
+**Prompt:**
+
+> Antes de seguir con el paso 6, quiero que corrobores que el paso 3, 4 y 5
+> esten bien hechos y funcionen correctamente.
+
+**Response (summary):**
+
+- Reruns from scratch gave identical results.
+- Diebold-Mariano matches `statsmodels`.
+- Prices match independent pricers.
+- Hedging P&L, recomputed straight from the quotes, matches.
+- The stress-test accounting was checked by hand on a frozen market.
+- The tail risk is stable across seeds (±4%).
+- It fixed the stress paths so the dividend follows the same escrowed model
+  as the pricer. The results did not change.
+
+### 4.7 Step 6: decision, report, presentation and this log
+
+**Prompt:**
+
+> Dale, vamos con el paso 6.
+
+**Response (summary):**
+
+- `scorecard.py`, with criteria written down before the paper P&L exists.
+- The consolidated report for the semester (sections 7 to 13), with 90
+  numbers checked by `check_informe.py`.
+- The Part 2 slides, and this entry.
+
+**Why we delegated:** writing up results that come from scripts. The final
+decision follows a rule written down before the paper results exist, and the
+production criterion (paper P&L) is still pending.
+
+**Decisions made by us in this session:**
+
+- run both models in the same account and the Greeks in production;
+- move the strategy to the escrowed tree;
+- leave the paper run for the end, with everything ready;
+- run delta-gamma in paper even though the evidence favours delta.

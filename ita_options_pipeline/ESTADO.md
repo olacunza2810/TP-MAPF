@@ -24,6 +24,7 @@ python scripts/run_model_comparison.py                       # Parte 2, paso 3 (
 python scripts/run_model_comparison.py --spot underlying_price   # robustez con el cierre
 python scripts/run_hedging.py                                # Parte 2, paso 4 (~3 min)
 python scripts/run_stress.py                                 # Parte 2, paso 5 (~11 min)
+python scripts/scorecard.py                                  # Parte 2, paso 6
 ```
 
 ## Estado por etapa de la consigna
@@ -50,7 +51,7 @@ python scripts/run_stress.py                                 # Parte 2, paso 5 (
 | 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
 | 4. Cobertura con griegas | `run_hedging.py` (DoltHub) y `--hedge delta_gamma` en paper: un libro por modelo y subyacente |
 | 5. Monte Carlo de estrés | `run_stress.py`: cartera en producción, 6 escenarios MC (5.000 trayectorias) y 5 determinísticos |
-| 6. Scorecard, informe y presentación | pendiente |
+| 6. Scorecard, informe y presentación | `scorecard.py` (criterios fijados antes del paper), informe consolidado (22 págs., 90 números verificados), AI log, slides de la Parte 2 |
 
 Paso 3, en una línea por resultado (spot implícito, 181 ruedas, 36.515 contratos):
 
@@ -108,7 +109,7 @@ Paso 5 (cartera a capacidad del 20/11: 3 estructuras por modelo, 10 ruedas):
 ## Pendiente
 
 - Correr `paper-run` en cada rueda y sumar el P&L acumulado al informe.
-- Paso 6 de la Parte 2.
+- Correr el paper (`scripts/paper_daily.ps1`) y completar con el P&L acumulado: la slide de paper, la sección 12 del informe y el criterio M4 (`scorecard.py --ledger data/paper/ledger.sqlite`).
 
 ## Paper trading: corrida diaria
 

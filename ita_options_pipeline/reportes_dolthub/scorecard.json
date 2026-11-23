@@ -1,0 +1,53 @@
+{
+  "modelo": {
+    "criterios": [
+      {
+        "criterio": "M1 repricing (DM, medios spreads)",
+        "evidencia": "d = 0.0373, DM = 13.09, p = 6.0e-28",
+        "ganador": "crr"
+      },
+      {
+        "criterio": "M2 relevancia económica (EEP > medio spread)",
+        "evidencia": "0.32% de los contratos",
+        "ganador": "empate"
+      },
+      {
+        "criterio": "M3 cobertura delta (DM, error al cuadrado)",
+        "evidencia": "d = -6.26, DM = -0.27, p = 0.79",
+        "ganador": "empate"
+      },
+      {
+        "criterio": "M4 producción (P&L realizado por estructura, paper)",
+        "evidencia": "sin ledger de paper todavía",
+        "ganador": "pendiente"
+      }
+    ],
+    "decision": "crr",
+    "nombre": "binomial",
+    "regla": "más criterios ganados; empate -> Black-Scholes (más simple)"
+  },
+  "estrategia": {
+    "criterios": [
+      {
+        "criterio": "E1 efectividad neta (paso 4)",
+        "evidencia": "delta 95%, delta-gamma entera 73%",
+        "ganador": "delta"
+      },
+      {
+        "criterio": "E2 ES 99% al mid, promedio MC (paso 5)",
+        "evidencia": "delta USD 660, delta-gamma entera USD 835, sin cobertura USD 1.026",
+        "ganador": "delta"
+      },
+      {
+        "criterio": "E3 costo de cobertura, GBM (paso 5)",
+        "evidencia": "sin cobertura USD 0.00, delta USD 1.41, delta-gamma entera USD 1.41",
+        "ganador": "empate"
+      }
+    ],
+    "decision": "delta",
+    "regla": "más criterios ganados; empate -> menor costo"
+  },
+  "pendiente": [
+    "M4 producción (P&L realizado por estructura, paper)"
+  ]
+}

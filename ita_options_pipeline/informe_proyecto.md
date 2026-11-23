@@ -1,6 +1,6 @@
 ---
-title: "Detección de arbitrajes y valor relativo en opciones sobre RTX, BA y LMT"
-subtitle: "Parte 1 corregida: bid/ask observado, paridad con dividendos discretos, walk-forward y paper trading"
+title: "Arbitraje, valor relativo y coberturas en opciones sobre RTX, BA y LMT"
+subtitle: "Informe consolidado del semestre: Parte 1 (binomial, corregida) y Parte 2 (Black-Scholes, griegas y Monte Carlo)"
 author: "Grupo 3: A. Herrera, O. Lacunza, C. Grunewald, D. González y T. Brisighelli"
 date: "23 de noviembre de 2026"
 geometry: margin=2.2cm
@@ -43,6 +43,27 @@ Los hallazgos centrales son cuatro.
 La estrategia de valor relativo, de payoff acotado y tamaño mínimo, es la que
 corre en paper trading, porque es la única que genera posiciones sobre las que
 la Parte 2 puede comparar el binomial contra Black-Scholes en producción.
+
+La Parte 2 (secciones 7 a 13) agrega cuatro resultados.
+
+5. **El binomial reprecia mejor que Black-Scholes, pero por poco.** Con el
+   mismo dividendo discreto en los dos modelos, sobre 36.515 contratos, el
+   test de Diebold-Mariano favorece al binomial ($DM^* = 13{,}1$) justo donde
+   la teoría lo predice: puts dentro del dinero y calls con fecha ex. La prima
+   de ejercicio anticipado supera medio spread sólo en el 0,3% de los
+   contratos.
+6. **La cobertura que conviene es delta con acciones.** Sobre 3.272
+   días-posición reduce la varianza diaria 95%, igual neta de costos;
+   cubrir también la gamma con opciones gana un punto bruto y pierde 16 netos.
+   Las griegas de los dos modelos dan la misma cobertura.
+7. **En el estrés manda la liquidez.** La cobertura delta baja el ES 99% de la
+   cartera en producción entre 25% y 45% en GBM, Heston y Merton; cerrar todo
+   cruzando el spread cuesta más que cualquier escenario de mercado. El estrés
+   además encontró que el kill-switch en vivo se disparaba al abrir cada
+   posición; se corrigió.
+8. **Decisión, con criterios fijados antes del paper:** binomial y cobertura
+   delta, con la salvedad de que la ventaja del binomial es estadística más
+   que económica (sección 11).
 
 # 1. Qué cambió respecto de la entrega parcial
 
@@ -400,14 +421,16 @@ mercado **en su propio espacio de volatilidad**, y en estructuras cercanas al
 dinero, de 21 a 75 días, la diferencia entre la valuación americana y la
 europea se absorbe casi entera en la sonrisa ajustada. Donde el árbol debería
 diferenciarse es en las puts en el dinero y en los calls de RTX y LMT cerca de
-las fechas ex. Esa es la comparación que la Parte 2 tiene que hacer en
-producción, con las posiciones del paper.
+las fechas ex. La sección 8 hace esa comparación sobre toda la cadena y la
+confirma.
 
 # 6. Paper trading y monitoreo
 
 ## 6.1 Qué corre
 
-`paper-run --strategy rv_crr` en la cuenta paper de Alpaca (opciones nivel 3).
+`paper-run --strategy rv_compite` en la cuenta paper de Alpaca (opciones nivel
+3): el binomial y Black-Scholes compiten en la misma cuenta (sección 7.3) y
+cada libro se cubre con griegas (sección 9.3).
 En cada ciclo, cada 120 segundos durante la rueda:
 
 1. **Datos.** Spot, universo de contratos (una vez por rueda) y cotizaciones;
@@ -415,14 +438,18 @@ En cada ciclo, cada 120 segundos durante la rueda:
    viejas.
 2. **Corte manual.** Si existe el archivo `KILL`, detiene las entradas y
    cierra todo.
-3. **Gestión de posiciones.** Marca cada estructura al lado de cierre del NBBO
-   y la cierra por kill-switch, por convergencia o antes del vencimiento. Si la
-   pérdida diaria supera el límite, detiene las entradas y cierra todo.
+3. **Gestión de posiciones.** Marca cada estructura al mid y al lado de
+   cierre del NBBO. La cierra por kill-switch (al mid), por convergencia (a
+   liquidación) o antes del vencimiento. Si la pérdida diaria, al mid y con la
+   cobertura incluida, supera el límite, detiene las entradas y cierra todo.
 4. **Reconciliación.** Compara el ledger SQLite con las posiciones del broker;
    si difieren dos ciclos seguidos, detiene las entradas.
-5. **Entradas.** Ajusta la sonrisa del binomial, elige como máximo 2
-   estructuras y envía una orden `mleg` límite al precio del modelo menos el
-   margen, que espera hasta 180 segundos antes de cancelarse.
+5. **Entradas.** Cada modelo ajusta su sonrisa y propone hasta 2
+   estructuras; con cupo de 3 abiertas por modelo, envía una orden `mleg`
+   límite al precio del modelo menos el margen, que espera hasta 180 segundos
+   antes de cancelarse.
+6. **Cobertura.** Calcula las griegas de cada libro y rebalancea con acciones
+   y con la call ATM corta (sección 9.3).
 
 | Parámetro | Valor |
 |---|---|
@@ -431,15 +458,16 @@ En cada ciclo, cada 120 segundos durante la rueda:
 | Vencimientos | 21 a 75 días (diciembre de 2026 en adelante) |
 | Edge mínimo contra el modelo | USD 10 |
 | Convergencia | 60% del edge |
-| Kill-switch | USD 250 de pérdida no realizada por estructura |
+| Kill-switch | USD 250 de pérdida no realizada por estructura, al mid |
 | Pérdida diaria máxima | USD 1.000 |
-| Posiciones simultáneas | 6 |
+| Posiciones simultáneas | 6 (3 por modelo) |
+| Cobertura | delta-gamma entera, banda de 10 acciones, hasta 5 contratos |
 
 ## 6.2 Estado
 
 El 22 de noviembre el diagnóstico (`doctor`) verificó autenticación, permisos
-de opciones nivel 3, universo de 3.678 contratos y NBBO en vivo. La primera
-rueda prevista es la del 23 de noviembre. El reporte de cada sesión queda en
+de opciones nivel 3, universo de 3.678 contratos y NBBO en vivo. El loop corre
+con la versión completa de la Parte 2 (sección 12). El reporte de cada sesión queda en
 `reportes/paper/session_<fecha>/`, con las órdenes, los fills, las
 reconciliaciones y los eventos del kill-switch. **El P&L acumulado en paper se
 agrega a este informe a medida que haya ruedas operadas.**
@@ -449,23 +477,419 @@ consigna no evalúa el retorno, y el objetivo del paper es otro: medir en
 producción la tasa de llenado y la selección adversa, y tener posiciones sobre
 las que comparar el binomial contra Black-Scholes en la Parte 2.
 
-# 7. Limitaciones
+# Parte 2: Black-Scholes, griegas y Monte Carlo
+
+Las estrategias de la Parte 1 siguen en producción. Sobre ellas, la Parte 2
+pone a competir a Black-Scholes contra el binomial, diseña coberturas con
+griegas, somete la cartera a escenarios de estrés y cierra con una decisión
+basada en criterios fijados de antemano. Las secciones 7 a 12 siguen ese
+orden; la 13 cuenta el proceso.
+
+# 7. Black-Scholes: implementación y validación
+
+## 7.1 Los dos modelos con el mismo dividendo
+
+Para que la comparación mida sólo lo que distingue a los modelos (el
+ejercicio anticipado), los dos usan la misma convención de dividendos: el
+modelo de spot *escrowed* (Hull, cap. 21). Con dividendos conocidos $d_i$ en
+las fechas ex $t_i$,
+
+$$S_t = S^*_t + D(t), \qquad D(t) = \sum_{t < t_i \le T} d_i\, e^{-r(t_i - t)},$$
+
+y la volatilidad se aplica a $S^*$.
+
+- **Black-Scholes** (Black y Scholes, 1973; Merton, 1973) es la fórmula
+  europea sobre $S^* = S - D(0)$:
+  $$C = S^* N(d_1) - K e^{-r\tau} N(d_2), \quad P = K e^{-r\tau} N(-d_2) - S^* N(-d_1), \quad d_{1,2} = \frac{\ln(S^*/K) + (r \pm \tfrac12\sigma^2)\tau}{\sigma\sqrt\tau}.$$
+- **Binomial**: el árbol CRR se arma sobre $S^*$ y en cada nodo compara el
+  valor de continuar con el de ejercer al precio real
+  $S^*_{n,j} + D(t_n)$. Así sabe en qué fecha cae cada dividendo y valúa el
+  ejercicio del call en la víspera de la fecha ex.
+
+**Griegas.** Las de Black-Scholes son cerradas; como $D$ depende de $r$ y de
+$t$, la $\rho$ y la $\Theta$ llevan un término más:
+$\rho = \rho^* + \Delta \sum_i d_i t_i e^{-r t_i}$ y $\Theta = \Theta^* - \Delta\, r D$.
+Las del árbol salen de sus nodos: $\Delta$ y $\Gamma$ de los pasos 1 y 2, y la
+$\Theta$ corregida por el corrimiento de $D$ entre esos pasos; $\mathcal V$ y
+$\rho$ por diferencias centrales, promediando los árboles de $N$ y $N+1$
+pasos para cancelar la oscilación par-impar del precio.
+
+**Validación.** El árbol reproduce el ejemplo de Hull de una put americana
+con dividendo discreto ($S_0=52$, $K=50$, $r=10\%$, $\sigma=40\%$, 5 meses,
+dividendo de 2,06 a los 3,5 meses, 5 pasos): **4,4404** contra 4,44 del
+libro. La versión europea del árbol converge a Black-Scholes con dividendo
+discreto, en el precio y en las cinco griegas. Una
+nota sobre el material de clase: la slide 9 del tutorial 7 y la tabla de
+griegas del notebook tienen la put con el signo cambiado; el código usa la
+fórmula correcta.
+
+## 7.2 Calibración y backtest
+
+Black-Scholes se calibra exactamente igual que el binomial (sección 3.2): una
+sonrisa cuadrática por vencimiento, ajustada sobre las opciones fuera del
+dinero. Reprecia la cadena con el mismo error que el árbol: entre 82% y 93%
+de los precios dentro del bid-ask en la misma foto, y la misma pérdida de
+ajuste en la rueda siguiente (`calibracion_rmse.csv`). En el walk-forward de
+la sección 5.3 la estrategia de valor relativo con Black-Scholes hace 6
+operaciones fuera de muestra y USD +1.324, y en la muestra completa ninguna
+de sus 18 configuraciones supera un Sharpe deflactado de 0,35.
+
+## 7.3 Producción: los dos modelos en la misma cuenta
+
+`paper-run --strategy rv_compite` corre la estrategia de valor relativo con
+los dos modelos a la vez. En cada ciclo cada modelo ajusta **su** sonrisa y
+propone sus estructuras; hay un cupo de 3 estructuras abiertas por modelo y la
+prioridad se alterna entre ciclos. Si los dos proponen las mismas patas, se
+ejecuta una sola vez y la señal duplicada queda registrada. Cada estructura
+lleva el nombre de su modelo (`rv_crr_*`, `rv_bsm_*`), así que el P&L, las
+coberturas y el riesgo se atribuyen por modelo.
+
+Antes de ponerlo en producción verificamos que el loop en vivo y el backtest
+valúen igual: sobre la cadena real del 26 de agosto, las 30 señales de cada
+modelo tienen el mismo valor en los dos caminos (diferencia máxima $0$), con
+LMT a 6 días de su fecha ex.
+
+# 8. Binomial contra Black-Scholes sobre la cadena observada
+
+## 8.1 Diseño
+
+Sobre las 181 ruedas, cada modelo invierte la volatilidad de las opciones
+fuera del dinero **con su propio precio**, ajusta su sonrisa y valúa todos los
+contratos operables, también los que están dentro del dinero (36.515
+contratos de 7 a 120 días). Las ITM no entran al ajuste: valuarlas con la
+sonrisa de las OTM del mismo strike es una prueba fuera de muestra en el corte
+transversal, y es justo donde un modelo europeo tendría que fallar.
+
+La **prima de ejercicio anticipado** se mide entre el árbol americano y el
+mismo árbol sin ejercicio, a la misma $\sigma$:
+$\mathrm{EEP} = V^{CRR}_{am} - V^{CRR}_{eu} \ge 0$. La teoría dice dónde
+aparece: en calls sólo antes de una fecha ex (sin dividendos un call
+americano vale lo mismo que el europeo; Merton, 1973), y en puts dentro del
+dinero, creciendo con el plazo y con la tasa.
+
+Para comparar los errores se usa el test de **Diebold y Mariano (1995)**
+sobre la serie diaria del diferencial de pérdidas,
+
+$$d_t = \frac{1}{n_t}\sum_{i \in t}\left(L^{BS}_i - L^{CRR}_i\right), \qquad L = \frac{|\hat V - m|}{s/2},$$
+
+con varianza de Newey y West (1987) y la corrección de muestra chica de
+Harvey, Leybourne y Newbold (1997): $DM^* = \bar d/\sqrt{\hat\Omega/T}\cdot\sqrt{(T-1)/T}$.
+Promediar dentro del día evita tratar como independientes contratos que
+comparten el mismo shock. $\bar d > 0$ favorece al binomial.
+
+**Spot.** Se valúa con el spot implícito por paridad en la misma foto: el
+cierre de la acción está desfasado de la foto de opciones (sección 2.3), y
+para una opción muy dentro del dinero, con $\Delta \approx 1$, ese desfase
+pasa entero al error.
+
+## 8.2 Resultados
+
+![Prima de ejercicio anticipado en medios spreads, por dinero y fecha ex](reportes_dolthub/comparacion_eep.png)
+
+1. **El binomial reprecia mejor, con alta significancia.** $\bar d = 0{,}037$
+   medios spreads, $DM^* = 13{,}1$. La diferencia está donde la teoría la
+   pone: puts muy dentro del dinero ($\bar d = 0{,}134$, $DM^* = 14{,}9$) y
+   calls con una fecha ex en su vida ($DM^*$ entre 2,9 y 10,5).
+2. **Donde no tiene que haber diferencia, no la hay.** En los calls sin fecha
+   ex, $p = 0{,}53$; en las opciones que entran al ajuste, $p = 0{,}54$.
+3. **Es poco frente al spread.** La prima supera medio spread en el 0,3% de
+   los contratos. Dentro del bid-ask caen el 98,1% de los precios del binomial
+   y el 97,6% de los de Black-Scholes.
+4. **En las opciones que opera la estrategia sí pesa.** En el universo de la
+   estrategia (14.142 contratos), la diferencia entre los dos modelos supera
+   los USD 10 por contrato en el 30% de los casos. Black-Scholes valúa las
+   puts dentro del dinero USD 19 por contrato por debajo del mercado: en la
+   competencia, eso lo empuja a venderlas baratas.
+5. **El dividendo discreto también importa.** Con un tercer modelo, el árbol
+   con yield continuo equivalente calibrado por su cuenta, el escrowed erra
+   menos ($DM^* = 6{,}1$); el yield continuo valúa los calls ITM USD 16 por
+   contrato por debajo del mercado. Por esta evidencia **la estrategia en
+   producción pasó al árbol escrowed** (en vivo, backtest y calibración). Los
+   números de la Parte 1 se recalcularon y no cambió ninguna conclusión.
+
+Con el cierre de la acción en lugar del spot implícito el resultado se
+mantiene ($DM^* = 4{,}0$), pero sólo el 80% de los precios caen dentro del
+bid-ask: el desfase horario domina el error de las ITM.
+
+# 9. Estrategias con griegas
+
+## 9.1 Diseño
+
+Para una posición de $q$ contratos de la opción $O$ y una opción de cobertura
+$H$:
+
+- **Delta** (acción): $h = -100\, q\, \Delta_O$ acciones.
+- **Delta-gamma** (call ATM del vencimiento más corto + acción):
+  $n = -q\,\Gamma_O/\Gamma_H$ contratos y $h = -100\,(q\,\Delta_O + n\,\Delta_H)$.
+- **Delta-vega** (call ATM del vencimiento más largo + acción):
+  $n = -q\,\mathcal V_O/\mathcal V_H$.
+- **Delta-gamma entera**: $n = \max(\mathrm{round}(-q\,\Gamma_O/\Gamma_H), 0)$.
+  Es la que se puede ejecutar en la cuenta: contratos enteros y sólo compras,
+  porque con nivel 3 de opciones no se puede vender una opción descubierta.
+
+Cada cobertura se calcula con las griegas de cada modelo, con su propia
+sonrisa. La efectividad es
+
+$$E = 1 - \frac{\operatorname{Var}(\Delta\Pi^{\text{cubierta}})}{\operatorname{Var}(\Delta\Pi^{\text{sin cubrir}})}.$$
+
+**Experimento.** Se vende 1 contrato de cada opción del universo de la
+estrategia el primer día que aparece y se la sigue mientras tenga cotización,
+hasta 10 ruedas, con rebalanceo diario: 1.749 posiciones y 3.272
+días-posición, sin repetir ningún día-opción. El P&L diario es a mids, con el
+dividendo que cobra la acción y el carry del efectivo; los costos se informan
+aparte (medio spread observado y USD 0,65 por contrato en opciones; 1 punto
+básico en la acción). La opción de cobertura se mantiene mientras siga a menos
+de 5% del dinero.
+
+## 9.2 Resultados
+
+![Efectividad de cada cobertura, bruta y neta de costos](reportes_dolthub/cobertura_efectividad.png)
+
+| Cobertura | $E$ bruta | $E$ neta | Costo por posición |
+|---|---:|---:|---:|
+| Delta | 95% | 95% | USD 3 |
+| Delta-gamma | 96% | 79% | USD 133 |
+| Delta-gamma entera | 95% | 73% | USD 154 |
+| Delta-vega | 94% | 63% | USD 188 |
+
+1. **Delta con acciones es la mejor después de costos.** Cubrir la gamma
+   reduce el riesgo un punto más, pero las opciones de cobertura se compran y
+   se venden con spreads anchos: armar y desarmar cuesta unos USD 130 por
+   posición, y el rebalanceo diario USD 6 más. Rebalancear la delta cuesta
+   USD 0,11 por día.
+2. **Para cubrir, los dos modelos son equivalentes.** La delta difiere en
+   0,004 en promedio y como mucho 0,010 (puts ITM). Diebold-Mariano sobre el
+   error de cobertura al cuadrado no encuentra diferencia ($p = 0{,}79$ en
+   delta, $0{,}53$ en delta-gamma, $0{,}06$ en delta-vega).
+3. **La medición exige precios sincrónicos.** Marcando la acción al cierre,
+   la efectividad de la delta cae de 95% a 67%: no falla la cobertura, falla
+   el dato.
+
+Sesgo a tener en cuenta: una opción que se aleja mucho del spot deja de
+cotizar en DoltHub y su posición termina, así que los días de movimientos
+grandes están subrepresentados. Afecta igual a todas las coberturas y a los
+dos modelos; la varianza sin cubrir está subestimada.
+
+## 9.3 Producción
+
+`--hedge delta_gamma` cubre en vivo cada libro (un modelo y un subyacente):
+
+1. Agrega las griegas de las estructuras abiertas del libro, con el modelo del
+   libro: $\Delta_B = \sum 100\,u\,c\,\Delta_i$, y lo mismo para $\Gamma$,
+   $\mathcal V$ y $\Theta$.
+2. Compra la call ATM corta para la gamma, con
+   $n = \max(\mathrm{round}(-\Gamma_B/100\,\Gamma_H), 0)$, hasta 5 contratos.
+3. Cubre la delta que queda con acciones,
+   $h^* = -\mathrm{round}(\Delta_B + 100\,n\,\Delta_H)$, cuando se aparta 10
+   acciones o más de la posición (una banda en el espíritu de Leland, 1985).
+4. Registra las griegas de cada libro en cada ciclo. Las acciones y opciones
+   de cobertura entran a la reconciliación con el broker y a la pérdida
+   diaria; el kill-switch las cierra.
+
+Es lo más cercano a la consigna: las dos griegas en producción, con acciones
+y con opciones. Por evidencia, la cobertura recomendada es delta; la
+delta-gamma corre en paper para medir su costo real con fills de verdad.
+
+# 10. Stress-testing por Monte Carlo
+
+## 10.1 Cartera, dinámicas y reglas
+
+Se estresa la cartera que la competencia abriría a capacidad máxima en la
+última foto (20 de noviembre): tres estructuras por modelo sobre BA y RTX
+(`estres_cartera.csv`), a 10 ruedas, con las reglas de producción:
+kill-switch de USD 250 por estructura, pérdida diaria de USD 1.000 y
+take-profit del 60% del edge.
+
+Los tres subyacentes se simulan juntos, con shocks correlacionados por
+Cholesky ($Z = L\varepsilon$, $LL^\top = \Sigma$, correlación de 5 años de
+retornos diarios), sobre $S^*$ y con $S = S^* + D(t)$:
+
+- **GBM:** $d\ln S^* = (r - \tfrac12\sigma^2)\,dt + \sigma\,dW$, con la
+  volatilidad implícita ATM de la foto.
+- **Heston** (1993), con truncamiento completo (Lord, Koekkoek y van Dijk,
+  2010):
+  $$v_{k+1} = v_k + \kappa(\theta - v_k^+)\Delta t + \xi\sqrt{v_k^+\Delta t}\,Z^v, \qquad \ln S^*_{k+1} = \ln S^*_k + (r - \tfrac12 v_k^+)\Delta t + \sqrt{v_k^+\Delta t}\,Z^S.$$
+  Calibrado con la IV ATM de DoltHub:
+  $\Delta v = a + b\,v + \varepsilon$ da $\kappa = -b/\Delta t$,
+  $\theta = a/(\kappa\Delta t)$, $\xi = \operatorname{sd}(\varepsilon)/\sqrt{\bar v\,\Delta t}$
+  y $\rho = \operatorname{corr}(\varepsilon, r)$. Resultan $\xi$ entre 0,36 y
+  0,44 y $\rho$ entre $-0{,}13$ y $-0{,}18$. El escenario estresado usa
+  $\theta = (1{,}5\,\sigma_0)^2$, $\kappa = 3$, $\xi = 1$ y $\rho = -0{,}7$.
+- **Merton** (1976): $d\ln S^* = (r - \lambda\bar k - \tfrac12\sigma_d^2)\,dt + \sigma_d\,dW + J\,dN$,
+  $J \sim N(\mu_J, \sigma_J^2)$, $\bar k = e^{\mu_J + \sigma_J^2/2} - 1$.
+  Calibrado con 5 años: saltos de más de 4 desvíos robustos, unos 4 por año
+  en cada acción, de desvío 7% a 9%. La versión sectorial hace saltar a los
+  tres juntos (un mismo Poisson, 4 por año, de $-8\%$ con desvío 5%): el
+  riesgo de evento propio de defensa.
+
+Una corrección al material de clase: el simulador de Heston del notebook
+difunde el precio con `np.sqrt(Var[-1])`, la última fila de la matriz, que
+vale $v_0$ hasta el último paso. El precio queda con volatilidad constante y
+la volatilidad estocástica nunca le llega. Acá se usa $v_k^+$, y un test lo
+verifica: la varianza realizada de cada trayectoria correlaciona con su
+$\bar v$.
+
+**Revaluación.** El mercado valúa cada pata con el árbol americano escrowed,
+a la volatilidad implícita de su mid desplazada en paralelo por el cambio de
+la volatilidad ATM del escenario. El mispricing que leyó la estrategia
+persiste: el estrés mide el riesgo de mercado de la cartera y no supone que
+el modelo tenga razón. Cada libro se cubre con las griegas de su modelo.
+
+## 10.2 Resultados
+
+![Estrés de la cartera: ES 99% por escenario y P&L de los escenarios determinísticos](reportes_dolthub/estres_es99.png)
+
+| Escenario | ES 99% sin cobertura | ES 99% delta | ES 99% delta-gamma |
+|---|---:|---:|---:|
+| GBM | 1.066 | 589 | 589 |
+| Heston calibrado | 1.024 | 594 | 594 |
+| Heston estresado | 1.029 | 648 | 656 |
+| Merton calibrado | 1.000 | 741 | 741 |
+| Merton sectorial | 902 | 557 | 557 |
+| Spreads x3 | 1.139 | 832 | 1.873 |
+
+ES al mid, en USD, de la cuenta completa a 10 ruedas; 5.000 trayectorias por escenario.
+
+1. **La cobertura delta baja el riesgo de cola entre 25% y 45%** en todos los
+   escenarios. La delta-gamma entera da lo mismo: la gamma de estas
+   estructuras pide entre $-0{,}03$ y $0{,}06$ contratos, que redondean a 0.
+   Con spreads triples es peor, porque compra gamma pagando el spread.
+2. **El riesgo dominante es la liquidez.** Cerrar toda la cartera cruzando el
+   spread cuesta USD 708 en condiciones normales y USD 2.443 con spreads
+   triples, más que cualquier escenario de mercado.
+3. **Las estructuras tienen pérdida acotada.** Ni una caída de 15% en un día
+   con la volatilidad 15 puntos arriba, ni la repetición de las 10 ruedas del
+   COVID o de los aranceles de abril de 2025, disparan la pérdida diaria. El
+   kill-switch salta en el 2% a 6% de las trayectorias.
+4. **Por modelo**, el libro de Black-Scholes tiene menos riesgo de cola (con
+   delta, USD 251 contra 460 en GBM), porque abrió estructuras más chicas: es
+   una diferencia de cartera, no de griegas.
+
+En los escenarios históricos la volatilidad sube 0,75 puntos por cada 1% de
+caída. Es una regla de estrés, no una calibración: la pendiente medida en
+2026 ($-0{,}1$) es de un régimen tranquilo.
+
+## 10.3 Lo que encontró el estrés en producción
+
+El loop en vivo medía el kill-switch y la pérdida diaria **a liquidación**,
+cruzando el spread. Una estructura recién abierta ya "pierde" la distancia
+de su límite al lado contrario del spread: en BA, USD 250 a 370 por vertical.
+Con esa regla el estrés da kill-switch en el 100% de las trayectorias, sin
+que el mercado se mueva, y un P&L esperado al mid de USD −846 contra −281 (sin cobertura). El
+backtest de la Parte 1 ya medía contra el mid; el loop en vivo no. Ahora el
+kill-switch y la pérdida diaria se miden al mid, y el take-profit sigue a
+liquidación, porque esa ganancia tiene que poder cobrarse. Un test de
+regresión falla con la regla anterior.
+
+# 11. Decisión final
+
+Los criterios y las reglas están escritos en `scripts/scorecard.py` **antes**
+de tener el P&L del paper trading. Los criterios con datos de backtest se
+fijaron después de conocer esos resultados; el criterio de producción todavía
+no tiene datos.
+
+**Modelo.** Gana el que gana más criterios; con empate, Black-Scholes, por ser
+el más simple.
+
+| Criterio | Evidencia | Ganador |
+|---|---|---|
+| M1. Repricing (Diebold-Mariano) | $\bar d = 0{,}037$, $DM^* = 13{,}1$ | binomial |
+| M2. Relevancia económica | la EEP supera medio spread en el 0,3% de los contratos | empate |
+| M3. Cobertura delta (Diebold-Mariano) | $p = 0{,}79$ | empate |
+| M4. P&L en paper por estructura | pendiente (al menos 10 cerradas por modelo) | — |
+
+**Cobertura.** Gana la que gana más criterios; con empate, la más barata.
+
+| Criterio | Evidencia | Ganador |
+|---|---|---|
+| E1. Efectividad neta | delta 95%, delta-gamma entera 73% | delta |
+| E2. ES 99% promedio en Monte Carlo | delta USD 660, delta-gamma USD 835, sin cubrir USD 1.026 | delta |
+| E3. Costo en GBM | delta y delta-gamma USD 1,41 | empate |
+
+**Con la evidencia disponible: binomial y cobertura delta.** El binomial gana
+porque es el modelo correcto para opciones americanas con dividendos
+discretos, y los datos lo confirman con mucha significancia. Pero hay que
+leerlo con su tamaño: la diferencia rara vez cambia si un precio está dentro
+del spread y no cambia la calidad de la cobertura. Donde sí importa es en las
+puts dentro del dinero y alrededor de las fechas ex, que es donde
+Black-Scholes, en la competencia, tiende a vender barato. El criterio M4
+puede dar vuelta el resultado si el paper acumula operaciones suficientes;
+la regla para eso ya está escrita.
+
+Sobre la estrategia en sí, la conclusión de la Parte 1 se mantiene: el valor
+relativo contra un modelo calibrado no tiene edge después de la selección
+adversa, y en esta cartera el costo de liquidez pesa más que el riesgo de
+mercado.
+
+# 12. Paper trading: Parte 2
+
+La corrida diaria (`scripts/paper_daily.ps1`) usa `--strategy rv_compite
+--hedge delta_gamma` con los mismos límites de la sección 6.1. El reporte de
+cada sesión queda en `reportes/paper/session_<fecha>/`: estrategias por
+modelo, órdenes de entrada y de cobertura, griegas de cada libro por ciclo y
+P&L de la cobertura. `scripts/scorecard.py --ledger data/paper/ledger.sqlite`
+evalúa el criterio M4 con lo acumulado. **El P&L acumulado de las dos partes
+se agrega a este informe y a la presentación con las ruedas operadas.**
+
+# 13. El proceso
+
+**Hitos.**
+
+1. Entrega parcial (septiembre): pipeline, binomial, detectores y backtest,
+   con bid/ask sintético.
+2. Devolución: siete puntos, el central el bid/ask sintético.
+3. Corrección (noviembre): datos de DoltHub con bid/ask observado, paridad
+   con dividendo discreto, valor relativo en paper, walk-forward, calibración.
+4. Parte 2: Black-Scholes compitiendo en la misma cuenta, comparación sobre
+   la cadena, coberturas con griegas en backtest y en vivo, estrés y decisión.
+
+**Errores y correcciones.**
+
+- Bid/ask sintético en la entrega parcial (sección 1).
+- Signos del préstamo y del medio spread de la acción en la paridad reversa
+  (sección 1).
+- El kill-switch del backtest medido a liquidación se disparaba el día del
+  fill (sección 5.2); en el loop en vivo el mismo error siguió hasta que lo
+  encontró el estrés (sección 10.3).
+- El yield continuo equivalente para el dividendo: correcto para el forward,
+  sesgado para el ejercicio anticipado. Reemplazado por el modelo escrowed
+  (sección 8.2).
+- En el loop en vivo, la sonrisa se ajustaba con filas no operables y con 150
+  pasos de árbol, contra 100 del backtest. Unificado antes de la Parte 2.
+- Material de clase: el signo de la put en la tabla de griegas y el `Var[-1]`
+  del simulador de Heston.
+
+**Qué funcionó y qué no.**
+
+- Funcionó medir todo contra bid y ask observados y con precios
+  sincrónicos: es lo que separa un arbitraje de un problema de datos.
+- Funcionó la cobertura delta: 95% de efectividad por USD 3 por posición.
+- No funcionó la estrategia de valor relativo como fuente de retorno, ni la
+  cobertura de gamma con opciones de spreads anchos.
+- El monitoreo detectó en el estrés un error que en producción habría
+  cerrado cada posición al abrirla.
+
+# 14. Limitaciones
 
 - **Una foto por rueda, sin hora documentada.** El desfase con el cierre se
-  mide y se absorbe con la banda de spot, pero no se elimina. El modelo de
-  llenado ve un solo precio por día.
+  mide y se absorbe con el spot implícito y la banda de spot, pero no se
+  elimina. El modelo de llenado ve un solo precio por día.
 - **Sin volumen ni open interest.** La liquidez se juzga sólo por el spread.
 - **Cuatro ruedas sin datos** en DoltHub (1, 13 y 14 de mayo; 29 de septiembre).
 - **Poca potencia estadística** en la estrategia de valor relativo con la
   grilla declarada (16 a 20 operaciones en nueve meses).
-- **Dividendo como yield equivalente** en el árbol: correcto para el forward,
-  aproximado para el ejercicio anticipado alrededor de la fecha ex.
+- **Corridas cortas en el backtest de coberturas** (1,9 días en promedio),
+  porque DoltHub no trae todos los vencimientos todos los días: el costo de
+  armar y desarmar pesa más que en una tenencia larga.
+- **El estrés** supone que el mispricing no converge, que la volatilidad se
+  mueve en paralelo en toda la sonrisa y, en los escenarios históricos, una
+  respuesta de la volatilidad fijada como regla.
 - **El paper de Alpaca** no simula slippage, impacto, dividendos ni costo de
   préstamo, y el feed gratuito (`indicative`) llega demorado.
 - **Asignación anticipada de la put vendida** en la conversión reversa: el
   detector la cubre con la cota de peor caso, pero el backtest no la simula.
 
-# 8. Literatura
+# 15. Literatura
 
 - **Cox, Ross y Rubinstein (1979)**, "Option Pricing: A Simplified Approach",
   *Journal of Financial Economics*. Es el árbol que usamos para valuar e
@@ -484,12 +908,29 @@ las que comparar el binomial contra Black-Scholes en la Parte 2.
 - **López de Prado (2018)**, *Advances in Financial Machine Learning*. Purga y
   embargo entre muestras, que aplicamos cortando las posiciones in-sample al
   final de su ventana.
+- **Black y Scholes (1973)**, "The Pricing of Options and Corporate
+  Liabilities", *Journal of Political Economy*; **Merton (1973)**, "Theory of
+  Rational Option Pricing", *Bell Journal of Economics*. El modelo de la Parte
+  2 y el resultado de que un call americano sin dividendos no se ejerce antes.
+- **Heston (1993)**, "A Closed-Form Solution for Options with Stochastic
+  Volatility", *Review of Financial Studies*; **Lord, Koekkoek y van Dijk
+  (2010)**, "A Comparison of Biased Simulation Schemes for Stochastic
+  Volatility Models", *Quantitative Finance*. La volatilidad estocástica del
+  estrés y su esquema de truncamiento completo.
+- **Merton (1976)**, "Option Pricing When Underlying Stock Returns Are
+  Discontinuous", *Journal of Financial Economics*. Los saltos del estrés.
+- **Diebold y Mariano (1995)**, "Comparing Predictive Accuracy", *Journal of
+  Business & Economic Statistics*; **Harvey, Leybourne y Newbold (1997)**;
+  **Newey y West (1987)**. El test con que comparamos los dos modelos.
+- **Leland (1985)**, "Option Pricing and Replication with Transactions
+  Costs", *Journal of Finance*. Por qué rebalancear con banda y no
+  continuamente.
 - **Glosten y Milgrom (1985)**, "Bid, Ask and Transaction Prices in a
   Specialist Market with Heterogeneously Informed Traders", *Journal of
   Financial Economics*. Explica por qué una orden pasiva al precio del modelo
   se llena en contra (sección 5.4).
 
-# 9. Reproducibilidad
+# 16. Reproducibilidad
 
 Desde `ita_options_pipeline/`:
 
@@ -500,8 +941,16 @@ python scripts/download_dolthub.py --start 2026-03-02 --end 2026-11-20
 python scripts/run_dolthub_analysis.py --out reportes_dolthub
 python scripts/run_calibration.py --out reportes_dolthub
 python scripts/run_rv_sensitivity.py --out reportes_dolthub
+python scripts/run_model_comparison.py        # sección 8
+python scripts/run_hedging.py                 # sección 9
+python scripts/download_history.py            # 10 años de Yahoo, para el estrés
+python scripts/run_stress.py                  # sección 10
+python scripts/scorecard.py                   # sección 11
 python scripts/check_informe.py
 ```
+
+Las descargas (`download_dolthub.py`, `download_history.py`) necesitan red;
+el resto corre sin red sobre `data/`.
 
 `check_informe.py` verifica que cada número clave de este informe coincida con
 los archivos de `reportes_dolthub/`.
