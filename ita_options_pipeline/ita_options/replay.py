@@ -263,6 +263,9 @@ def replay(
             "vencimiento": s.expiration, "limite": s.limit, "edge": s.edge, "abierta": s.opened,
             "cerrada": s.closed, "motivo": s.reason, "efectivo_entrada": s.entry_cash, "efectivo_salida": s.exit_cash,
             "pnl": (s.entry_cash + s.exit_cash) if s.closed else np.nan,
+            # P&L si se hubiera salido al mid (sin cruzar el spread de salida ni su comisión).
+            "pnl_al_mid": (s.entry_cash + MULT * s.last_mid) if s.closed and s.reason != "vencimiento" else
+                          ((s.entry_cash + s.exit_cash) if s.closed else np.nan),
         } for s in structures]),
         "eventos": pd.DataFrame(events),
     }

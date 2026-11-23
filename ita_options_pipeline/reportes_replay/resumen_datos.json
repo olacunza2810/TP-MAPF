@@ -1,0 +1,504 @@
+{
+  "filas": 503711,
+  "explotables": 327858,
+  "supervivencia": 0.6508851305609764,
+  "ruedas": 1229,
+  "desde": "2020-01-06",
+  "hasta": "2026-11-20",
+  "filas_por_subyacente": {
+    "LMT": 191135,
+    "BA": 175286,
+    "RTX": 137290
+  },
+  "spread_rel_mediano": 0.13783403656821375,
+  "exclusiones": {
+    "bid_nulo": 44373,
+    "quote_cruzado": 183,
+    "spread_relativo_excesivo": 175608,
+    "mid_por_debajo_del_minimo": 6274,
+    "dte_fuera_de_rango": 0,
+    "spot_no_alineado": 0,
+    "volumen_desconocido": 503711,
+    "open_interest_desconocido": 503711
+  },
+  "desfase_spot_abs_mediano_pct": 0.07714986661189194,
+  "desfase_spot_abs_p90_pct": 0.9436050610720725,
+  "dividendos": [
+    {
+      "ticker": "BA",
+      "ex_dividend_date": "2019-02-07",
+      "declaration_date": "2019-01-08",
+      "cash_amount": "2.055",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "BA",
+      "ex_dividend_date": "2019-05-09",
+      "declaration_date": "2019-04-09",
+      "cash_amount": "2.055",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "BA",
+      "ex_dividend_date": "2019-08-08",
+      "declaration_date": "2019-07-09",
+      "cash_amount": "2.055",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "BA",
+      "ex_dividend_date": "2019-11-07",
+      "declaration_date": "2019-10-08",
+      "cash_amount": "2.055",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "BA",
+      "ex_dividend_date": "2020-02-13",
+      "declaration_date": "2020-01-14",
+      "cash_amount": "2.055",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2019-02-28",
+      "declaration_date": "2019-01-29",
+      "cash_amount": "2.2",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2019-05-31",
+      "declaration_date": "2019-05-01",
+      "cash_amount": "2.2",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2019-08-30",
+      "declaration_date": "2019-07-31",
+      "cash_amount": "2.2",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2019-11-29",
+      "declaration_date": "2019-10-30",
+      "cash_amount": "2.4",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2020-02-28",
+      "declaration_date": "2020-01-29",
+      "cash_amount": "2.4",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2020-05-29",
+      "declaration_date": "2020-04-29",
+      "cash_amount": "2.4",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2020-08-31",
+      "declaration_date": "2020-08-01",
+      "cash_amount": "2.4",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2020-11-30",
+      "declaration_date": "2020-10-31",
+      "cash_amount": "2.6",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2021-02-26",
+      "declaration_date": "2021-01-27",
+      "cash_amount": "2.6",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2021-05-28",
+      "declaration_date": "2021-04-28",
+      "cash_amount": "2.6",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2021-08-31",
+      "declaration_date": "2021-08-01",
+      "cash_amount": "2.6",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2021-11-30",
+      "declaration_date": "2021-10-31",
+      "cash_amount": "2.8",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2022-02-28",
+      "declaration_date": "2022-01-29",
+      "cash_amount": "2.8",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2022-05-31",
+      "declaration_date": "2022-05-01",
+      "cash_amount": "2.8",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2022-08-31",
+      "declaration_date": "2022-08-01",
+      "cash_amount": "2.8",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2022-11-30",
+      "declaration_date": "2022-10-31",
+      "cash_amount": "3.0",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2023-02-28",
+      "declaration_date": "2023-01-29",
+      "cash_amount": "3.0",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2023-05-31",
+      "declaration_date": "2023-05-01",
+      "cash_amount": "3.0",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2023-08-31",
+      "declaration_date": "2023-08-01",
+      "cash_amount": "3.0",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2023-11-30",
+      "declaration_date": "2023-10-31",
+      "cash_amount": "3.15",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2024-02-29",
+      "declaration_date": "2024-01-30",
+      "cash_amount": "3.15",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2024-06-03",
+      "declaration_date": "2024-05-04",
+      "cash_amount": "3.15",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2024-09-03",
+      "declaration_date": "2024-08-04",
+      "cash_amount": "3.15",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2024-12-02",
+      "declaration_date": "2024-11-02",
+      "cash_amount": "3.3",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-03-03",
+      "declaration_date": "2025-01-28",
+      "cash_amount": "3.3",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-06-02",
+      "declaration_date": "2025-05-09",
+      "cash_amount": "3.3",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-09-02",
+      "declaration_date": "2025-06-25",
+      "cash_amount": "3.3",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-12-01",
+      "declaration_date": "2025-10-09",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2026-03-02",
+      "declaration_date": "2026-02-06",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2026-06-01",
+      "declaration_date": "2026-05-12",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2026-09-01",
+      "declaration_date": "2026-07-22",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2019-02-14",
+      "declaration_date": "2019-01-15",
+      "cash_amount": "0.462555",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2019-05-16",
+      "declaration_date": "2019-04-16",
+      "cash_amount": "0.462555",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2019-08-15",
+      "declaration_date": "2019-07-16",
+      "cash_amount": "0.462555",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2019-11-14",
+      "declaration_date": "2019-10-15",
+      "cash_amount": "0.462555",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2020-02-13",
+      "declaration_date": "2020-01-14",
+      "cash_amount": "0.462555",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2020-05-14",
+      "declaration_date": "2020-04-14",
+      "cash_amount": "0.475",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2020-08-13",
+      "declaration_date": "2020-07-14",
+      "cash_amount": "0.475",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2020-11-12",
+      "declaration_date": "2020-10-13",
+      "cash_amount": "0.475",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2021-02-25",
+      "declaration_date": "2021-01-26",
+      "cash_amount": "0.475",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2021-05-20",
+      "declaration_date": "2021-04-20",
+      "cash_amount": "0.51",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2021-08-19",
+      "declaration_date": "2021-07-20",
+      "cash_amount": "0.51",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2021-11-18",
+      "declaration_date": "2021-10-19",
+      "cash_amount": "0.51",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2022-02-24",
+      "declaration_date": "2022-01-25",
+      "cash_amount": "0.51",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2022-05-19",
+      "declaration_date": "2022-04-19",
+      "cash_amount": "0.55",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2022-08-18",
+      "declaration_date": "2022-07-19",
+      "cash_amount": "0.55",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2022-11-17",
+      "declaration_date": "2022-10-18",
+      "cash_amount": "0.55",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2023-02-23",
+      "declaration_date": "2023-01-24",
+      "cash_amount": "0.55",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2023-05-18",
+      "declaration_date": "2023-04-18",
+      "cash_amount": "0.59",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2023-08-17",
+      "declaration_date": "2023-07-18",
+      "cash_amount": "0.59",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2023-11-16",
+      "declaration_date": "2023-10-17",
+      "cash_amount": "0.59",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2024-02-22",
+      "declaration_date": "2024-01-23",
+      "cash_amount": "0.59",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2024-05-16",
+      "declaration_date": "2024-04-16",
+      "cash_amount": "0.63",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2024-08-16",
+      "declaration_date": "2024-07-17",
+      "cash_amount": "0.63",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2024-11-15",
+      "declaration_date": "2024-10-16",
+      "cash_amount": "0.63",
+      "fuente": "yahoo"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-02-21",
+      "declaration_date": "2025-01-31",
+      "cash_amount": "0.63",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-05-23",
+      "declaration_date": "2025-05-01",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-08-15",
+      "declaration_date": "2025-06-27",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-11-21",
+      "declaration_date": "2025-10-30",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-02-20",
+      "declaration_date": "2026-02-06",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-05-22",
+      "declaration_date": "2026-04-30",
+      "cash_amount": "0.73",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-08-14",
+      "declaration_date": "2026-06-26",
+      "cash_amount": "0.73",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-11-20",
+      "declaration_date": "2026-10-21",
+      "cash_amount": "0.73",
+      "fuente": "yahoo"
+    }
+  ]
+}
