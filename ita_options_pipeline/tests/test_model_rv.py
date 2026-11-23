@@ -231,3 +231,40 @@ def test_vivo_y_backtest_valuan_igual_con_dividendo_discreto(model: str) -> None
         kind = sig.detector.split("_")[-1]
         direction = 1.0 if sig.legs.startswith("compra") else -1.0
         assert direction * sig.model_value == pytest.approx(by_strikes[(sig.option_type, sig.strikes, kind)], abs=1e-9)
+
+
+def test_el_kill_switch_se_mide_al_mid_y_no_salta_por_el_spread(tmp_path) -> None:
+    """Paso 5: a liquidación, una estructura recién abierta ya pierde el spread y el kill-switch saltaba."""
+    chain = build_chain(expiries=(("2026-10-16", 43 / 365),), spread=4.0)  # spread ancho, como BA
+
+    def source(ch: pd.DataFrame) -> pd.DataFrame:
+        calls = ch.loc[ch["option_type"] == "c"].sort_values("strike")
+        lo, hi = calls.iloc[2], calls.iloc[3]
+        mid = lambda r: float((r["bid"] + r["ask"]) / 2)  # noqa: E731
+        legs = (
+            {"kind": "option", "symbol": lo["symbol"], "qty": 1.0, "price": mid(lo), "strike": float(lo["strike"]),
+             "option_type": "c", "expiration": lo["expiration"]},
+            {"kind": "option", "symbol": hi["symbol"], "qty": -1.0, "price": mid(hi), "strike": float(hi["strike"]),
+             "option_type": "c", "expiration": hi["expiration"]},
+        )
+        return pd.DataFrame([{
+            "detector": "rv_crr_vertical", "underlying": "RTX", "timestamp": lo["timestamp"], "option_type": "c",
+            "expiration": lo["expiration"], "strikes": "a/b", "legs": "compra", "gross_credit": 0.12,
+            "commission": 1.3, "net_edge": 0.107, "net_edge_usd": 10.7, "leg_spec": legs, "max_spread_rel": 0.1,
+            "symbols": "x", "min_volume": np.nan, "min_open_interest": np.nan,
+        }])
+
+    broker = FakeBroker()
+    broker.next_close = pd.Timestamp("2026-09-03 20:00", tz="UTC")
+    clock = SimTime()
+    settings = ExecutionSettings(kill_file=tmp_path / "KILL", order_poll_s=1.0, max_open_strategies=1,
+                                 min_edge_usd=5.0, kill_switch_usd=250.0, daily_loss_limit_usd=1000.0,
+                                 )
+    runner = LiveRunner(broker, FakeMarket([chain, chain]), Ledger(), settings, dry_run=False,
+                        report_dir=tmp_path / "rep", timing=Timing(sleep=clock.sleep, now=clock.now),
+                        now=lambda: pd.Timestamp("2026-09-03 15:00", tz="UTC"), signal_source=source)
+    assert runner.run_cycle().entries_opened == 1
+    report = runner.run_cycle()
+    # A liquidación la estructura vale -400 USD (dos medios spreads de 2 USD), pero al mid no perdió nada.
+    assert report.closes == 0 and report.halted is None
+    assert runner.ledger.open_strategies()

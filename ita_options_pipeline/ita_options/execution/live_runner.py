@@ -82,12 +82,13 @@ class CycleReport:
 
 def mark_value(
     legs: list[Mapping[str, Any]], contracts: int, quotes: pd.DataFrame,
-    spots: Mapping[str, float],
+    spots: Mapping[str, float], at_mid: bool = False,
 ) -> float | None:
-    """Valor de liquidar la estructura ahora, cruzando el spread.
+    """Valor de la estructura ahora.
 
-    Las patas largas se valúan al bid y las cortas al ask; la acción, al spot.
-    Devuelve ``None`` si falta algún precio.
+    Por defecto, valor de **liquidarla** cruzando el spread: las patas largas al
+    bid y las cortas al ask; la acción, al spot. Con ``at_mid`` cada pata va al
+    mid. Devuelve ``None`` si falta algún precio.
     """
     total = 0.0
     for leg in legs:
@@ -101,7 +102,10 @@ def mark_value(
         if leg["symbol"] not in quotes.index:
             return None
         row = quotes.loc[leg["symbol"]]
-        price = float(row["bid"] if units > 0 else row["ask"])
+        if at_mid:
+            price = 0.5 * (float(row["bid"]) + float(row["ask"]))
+        else:
+            price = float(row["bid"] if units > 0 else row["ask"])
         if not math.isfinite(price) or price <= 0:
             return None
         total += units * price * 100.0
@@ -276,19 +280,31 @@ class LiveRunner:
     ) -> None:
         unrealized_total = 0.0
         for strategy in self.ledger.open_strategies():
-            value = mark_value(strategy["legs"], int(strategy["contracts_open"] or 0), quotes, spots)
-            if value is None:
+            contracts_open = int(strategy["contracts_open"] or 0)
+            value = mark_value(strategy["legs"], contracts_open, quotes, spots)
+            mid_value = mark_value(strategy["legs"], contracts_open, quotes, spots, at_mid=True)
+            if value is None or mid_value is None:
                 self.ledger.event("sin_marca", None, strategy["id"])
                 continue
-            unrealized = float(strategy["entry_cash"] or 0) + float(strategy["exit_cash"] or 0) + value
-            unrealized_total += unrealized
+            cash = float(strategy["entry_cash"] or 0) + float(strategy["exit_cash"] or 0)
+            # Dos marcas, como en el backtest de la Parte 1:
+            # - a liquidación (cruzando el spread) para el take-profit: la ganancia
+            #   tiene que estar disponible de verdad después de pagar la salida;
+            # - al mid para el kill-switch y la pérdida diaria. A liquidación, una
+            #   estructura recién abierta ya "pierde" la distancia de su límite al
+            #   lado contrario del spread (en BA, USD 250 a 370 por vertical), así
+            #   que el kill-switch saltaba en el primer ciclo sin que el mercado se
+            #   moviera. Lo detectó el estrés de la Parte 2 (paso 5).
+            unrealized = cash + value
+            unrealized_mid = cash + mid_value
+            unrealized_total += unrealized_mid
             expirations = [leg["expiration"] for leg in strategy["legs"] if leg.get("expiration")]
             expires_today = bool(expirations) and min(expirations) <= today.isoformat()
             reason = None
             predicted = float(strategy.get("predicted_edge") or 0.0)
             contracts = int(strategy["contracts_open"] or 0)
             take_profit = self.settings.take_profit_fraction
-            if unrealized < -abs(self.settings.kill_switch_usd):
+            if unrealized_mid < -abs(self.settings.kill_switch_usd):
                 reason = "kill_switch"
             elif take_profit is not None and predicted > 0 and unrealized >= take_profit * predicted * contracts:
                 reason = "convergencia"

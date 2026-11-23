@@ -1,0 +1,11 @@
+modelo,estructura,subyacente,vencimiento,edge_usd,efectivo_entrada
+crr,"venta vertical call 150/155 a -3.10 (bid -5.55 / ask -1.86, crr -2.99)",BA,2027-01-15,10.00866098774863,308.97999999999996
+bsm,"compra vertical call 195/200 a +1.90 (bid +1.10 / ask +2.44, bsm +2.01)",RTX,2026-12-18,10.00089202751252,-191.35999999999996
+crr,"venta vertical put 165/170 a +3.31 (bid +1.65 / ask +4.30, crr +3.42)",BA,2027-01-15,10.007537207729012,-332.0399999999998
+crr,"compra vertical put 190/195 a -2.56 (bid -3.55 / ask -1.95, crr -2.45)",RTX,2026-12-18,10.000243670915932,255.06
+bsm,"venta butterfly call 150/155/160 a -0.58 (bid -3.95 / ask +1.73, bsm -0.45)",BA,2027-01-15,10.0084857949051,55.28000000000011
+bsm,"compra vertical call 190/195 a +2.47 (bid +1.50 / ask +3.15, bsm +2.58)",RTX,2026-12-18,10.000830292768448,-248.44000000000005
+crr,cobertura gamma: call 195,RTX,2027-01-15,,0.0
+crr,cobertura gamma: call 155,BA,2026-12-18,,0.0
+bsm,cobertura gamma: call 195,RTX,2027-01-15,,0.0
+bsm,cobertura gamma: call 155,BA,2026-12-18,,0.0

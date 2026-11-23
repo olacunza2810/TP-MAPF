@@ -23,6 +23,7 @@ python scripts/run_rv_sensitivity.py --out reportes_dolthub
 python scripts/run_model_comparison.py                       # Parte 2, paso 3 (~2 min)
 python scripts/run_model_comparison.py --spot underlying_price   # robustez con el cierre
 python scripts/run_hedging.py                                # Parte 2, paso 4 (~3 min)
+python scripts/run_stress.py                                 # Parte 2, paso 5 (~11 min)
 ```
 
 ## Estado por etapa de la consigna
@@ -48,7 +49,7 @@ python scripts/run_hedging.py                                # Parte 2, paso 4 (
 | 2. Griegas de los dos modelos | `ita_options/greeks.py`, dividendo discreto escrowed; Hull 4,44 reproducido |
 | 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
 | 4. Cobertura con griegas | `run_hedging.py` (DoltHub) y `--hedge delta_gamma` en paper: un libro por modelo y subyacente |
-| 5. Monte Carlo de estrés | pendiente |
+| 5. Monte Carlo de estrés | `run_stress.py`: cartera en producción, 6 escenarios MC (5.000 trayectorias) y 5 determinísticos |
 | 6. Scorecard, informe y presentación | pendiente |
 
 Paso 3, en una línea por resultado (spot implícito, 181 ruedas, 36.515 contratos):
@@ -84,10 +85,30 @@ Paso 4 (1.749 posiciones vendidas, 3.272 días-posición, rebalanceo diario):
   delta-gamma corre en paper porque la consigna pide las dos griegas en producción
   y así se mide su costo real.
 
+Paso 5 (cartera a capacidad del 20/11: 3 estructuras por modelo, 10 ruedas):
+
+- ES 99% al mid sin cobertura / con delta: GBM 1.066 / 589; Heston 1.024 / 594;
+  Heston estresado 1.029 / 648; Merton 1.000 / 741; Merton sectorial 902 / 557;
+  spreads x3 1.139 / 832 USD. La delta-gamma entera da lo mismo que la delta
+  (la gamma redondeada casi nunca llega a 1 contrato), salvo con spreads x3,
+  donde comprar gamma la empeora (1.873).
+- El riesgo dominante es la liquidez: cerrar todo cruzando el spread cuesta
+  USD 708 en condiciones normales y 2.443 con spreads x3, más que cualquier
+  escenario de mercado. Las estructuras son de riesgo acotado: ni la caída de
+  15% ni la repetición del COVID disparan la pérdida diaria.
+- **Corrección en producción:** el kill-switch y la pérdida diaria se medían a
+  liquidación; una estructura recién abierta ya "perdía" el spread y el
+  kill-switch saltaba en el primer ciclo (probabilidad 100% en el estrés, P&L
+  esperado -846 contra -278). Ahora se miden al mid, como en el backtest; el
+  take-profit sigue a liquidación.
+- Heston de clase: el notebook difunde el precio con `Var[-1]` (la última fila,
+  que vale v0), así que la vol estocástica nunca llega al precio. Corregido acá
+  (y con truncamiento completo); un test lo verifica.
+
 ## Pendiente
 
 - Correr `paper-run` en cada rueda y sumar el P&L acumulado al informe.
-- Pasos 5 y 6 de la Parte 2.
+- Paso 6 de la Parte 2.
 
 ## Paper trading: corrida diaria
 
