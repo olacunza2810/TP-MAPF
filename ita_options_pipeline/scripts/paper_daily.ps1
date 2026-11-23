@@ -17,10 +17,11 @@ $logDir = Join-Path $root "reportes\paper\logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log = Join-Path $logDir ((Get-Date -Format "yyyy-MM-dd") + ".log")
 
-# Estrategia de la Parte 1: valor relativo contra el binomial (CRR), modo maker.
-# Tamaño mínimo (1 unidad), payoff acotado, vencimientos entre 21 y 75 días.
+# Parte 2: el binomial (CRR) y Black-Scholes compiten en la misma cuenta con la
+# misma estrategia de valor relativo (modo maker): 3 estructuras abiertas como
+# máximo por modelo, 1 unidad, payoff acotado, vencimientos entre 21 y 75 días.
 python -m ita_options.pipeline paper-run --live `
-    --strategy rv_crr --contracts 1 --max-open 6 `
+    --strategy rv_compite --cap-per-model 3 --contracts 1 --max-open 6 `
     --min-edge 10 --take-profit 0.6 --fill-timeout 180 `
     --kill-switch 250 --daily-loss 1000 `
     --min-dte 21 --max-dte 75 --cycle-seconds 120 *>> $log

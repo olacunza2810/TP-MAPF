@@ -307,3 +307,103 @@ def detect_model_rv(
     key = "aggressiveness" if settings.execution == "maker" else "net_edge_usd"
     out = pd.DataFrame(signals).sort_values(key, ascending=False)
     return out.head(settings.max_signals).reset_index(drop=True)
+
+
+class CompetingModels:
+    r"""Fuente de señales con el binomial y Black-Scholes compitiendo en la misma cuenta.
+
+    Es la implementación de "Black-Scholes puesto a competir en producción
+    contra el binomial ya en ejecución" (consigna, Parte 2). Los dos modelos
+    corren la misma estrategia (:func:`detect_model_rv`) con los mismos
+    parámetros; sólo cambia el modelo con el que se calibra la sonrisa y se
+    valúa cada estructura. Así, la diferencia de resultados es atribuible al
+    modelo y no a la regla.
+
+    - **Cupo por modelo.** Cada modelo puede tener a lo sumo ``cap_per_model``
+      estructuras abiertas; uno no le quita lugar al otro.
+    - **Una estructura, un dueño.** Si los dos modelos eligen las mismas patas,
+      o patas que ya están abiertas por cualquiera de los dos, se ejecuta una
+      sola vez. La prioridad entre modelos alterna en cada ciclo, para que
+      ninguno tenga ventaja sistemática, y la señal descartada queda registrada
+      en el ledger (``senal_duplicada``).
+    - **Atribución.** El detector de cada estrategia lleva el modelo
+      (``rv_crr_vertical``, ``rv_bsm_butterfly``), así que el ledger separa el
+      P&L de cada uno.
+    - **Registro de cada ciclo.** Aunque no haya llenados, cada ciclo guarda
+      cuántas señales dio cada modelo (``senales_por_modelo``): es parte de la
+      comparación en producción.
+    """
+
+    def __init__(
+        self,
+        ledger: object,
+        costs: ExecutionCosts,
+        settings: dict[str, RVSettings],
+        cap_per_model: int = 3,
+    ) -> None:
+        self.ledger = ledger
+        self.costs = costs
+        self.settings = settings
+        self.cap_per_model = cap_per_model
+        self._turn = 0
+
+    @staticmethod
+    def model_of(detector: str) -> str | None:
+        """Modelo de un detector ``rv_<modelo>_<estructura>``, o ``None``."""
+        parts = str(detector).split("_")
+        return parts[1] if len(parts) >= 3 and parts[0] == "rv" else None
+
+    @staticmethod
+    def legs_key(legs) -> frozenset[str]:
+        """Identidad por patas, sin el detector: lo que comparte la cuenta."""
+        return frozenset(str(leg["symbol"]) for leg in legs if leg.get("kind", "option") == "option")
+
+    def __call__(self, chain: pd.DataFrame) -> pd.DataFrame:
+        open_strategies = self.ledger.open_strategies()
+        counts = {model: 0 for model in self.settings}
+        held: set[frozenset[str]] = set()
+        for strategy in open_strategies:
+            model = self.model_of(strategy["detector"])
+            if model in counts:
+                counts[model] += 1
+            held.add(self.legs_key(strategy["legs"]))
+
+        order = list(self.settings)
+        shift = self._turn % len(order)
+        order = order[shift:] + order[:shift]
+        self._turn += 1
+
+        candidates: dict[str, list[dict[str, object]]] = {}
+        for model in order:
+            room = self.cap_per_model - counts[model]
+            if room <= 0:
+                candidates[model] = []
+                continue
+            found = detect_model_rv(chain, self.costs, self.settings[model])
+            candidates[model] = found.to_dict("records") if not found.empty else []
+        self.ledger.event("senales_por_modelo", {
+            "prioridad": order[0],
+            **{m: len(c) for m, c in candidates.items()},
+            **{f"abiertas_{m}": counts[m] for m in counts},
+        })
+
+        chosen: list[dict[str, object]] = []
+        taken = set(held)
+        # Ronda alternada: la mejor de cada modelo, después la segunda, etc.
+        for rank in range(max((len(c) for c in candidates.values()), default=0)):
+            for model in order:
+                if rank >= len(candidates[model]):
+                    continue
+                if sum(1 for s in chosen if self.model_of(s["detector"]) == model) + counts[model] >= self.cap_per_model:
+                    continue
+                signal = candidates[model][rank]
+                key = self.legs_key(signal["leg_spec"])
+                if key in taken:
+                    self.ledger.event("senal_duplicada", {
+                        "modelo": model, "detector": signal["detector"],
+                        "patas": sorted(key), "edge_usd": float(signal["net_edge_usd"]),
+                    })
+                    continue
+                taken.add(key)
+                chosen.append(signal)
+        return pd.DataFrame(chosen)

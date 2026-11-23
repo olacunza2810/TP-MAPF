@@ -304,9 +304,13 @@ def _build_parser() -> argparse.ArgumentParser:
     paper.add_argument("--report-dir", default="reportes/paper")
     paper.add_argument("--detectors", nargs="+",
                        default=["monotonicity", "vertical_bound", "butterfly", "put_call_parity"])
-    paper.add_argument("--strategy", choices=["arbitrage", "rv_crr", "rv_bsm"], default="arbitrage",
+    paper.add_argument("--strategy", choices=["arbitrage", "rv_crr", "rv_bsm", "rv_compite"],
+                       default="arbitrage",
                        help="arbitrage: detectores model-free. rv_crr / rv_bsm: valor relativo en "
-                            "verticales y butterflies contra el binomial o Black-Scholes calibrado.")
+                            "verticales y butterflies contra el binomial o Black-Scholes calibrado. "
+                            "rv_compite: los dos modelos compitiendo en la misma cuenta (Parte 2).")
+    paper.add_argument("--cap-per-model", type=int, default=3,
+                       help="Con rv_compite: estructuras abiertas máximas por modelo.")
     paper.add_argument("--take-profit", type=float, default=None,
                        help="Cierra al alcanzar esta fracción del edge anunciado (p. ej. 0.6).")
     paper.add_argument("--min-dte", type=int, default=21)
@@ -510,7 +514,19 @@ def _run_paper(args: argparse.Namespace) -> None:
     elif (data_root / "polygon" / "dividends.parquet").exists():
         dividends = pd.read_parquet(data_root / "polygon" / "dividends.parquet")
     signal_source = None
-    if args.strategy != "arbitrage":
+    ledger = Ledger(Path(args.ledger) if args.ledger else data_root / "paper" / "ledger.sqlite")
+    if args.strategy == "rv_compite":
+        from .arbitrage import ExecutionCosts
+        from .execution.model_rv import CompetingModels, RVSettings
+
+        rv_costs = ExecutionCosts(min_net_edge=args.min_edge)
+        signal_source = CompetingModels(
+            ledger, rv_costs,
+            {m: RVSettings(model=m, min_dte=args.min_dte, max_dte=args.max_dte, min_edge_usd=args.min_edge)
+             for m in ("crr", "bsm")},
+            cap_per_model=args.cap_per_model,
+        )
+    elif args.strategy != "arbitrage":
         from .arbitrage import ExecutionCosts
         from .execution.model_rv import RVSettings, detect_model_rv
 
@@ -518,7 +534,6 @@ def _run_paper(args: argparse.Namespace) -> None:
                         max_dte=args.max_dte, min_edge_usd=args.min_edge)
         rv_costs = ExecutionCosts(min_net_edge=args.min_edge)
         signal_source = lambda chain: detect_model_rv(chain, rv_costs, rv)  # noqa: E731
-    ledger = Ledger(Path(args.ledger) if args.ledger else data_root / "paper" / "ledger.sqlite")
     runner = LiveRunner(
         AlpacaBroker(TradingClient(credentials.api_key, credentials.secret_key, paper=True)),
         AlpacaMarketData(config, settings), ledger, settings,

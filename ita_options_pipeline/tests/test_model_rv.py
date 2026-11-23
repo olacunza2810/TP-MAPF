@@ -103,3 +103,46 @@ def test_loop_con_fuente_rv_abre_y_cierra_por_convergencia(tmp_path) -> None:
     closed = runner.ledger.strategies(states=["closed"])
     assert closed and closed[0]["exit_reason"] == "convergencia"
     assert reconcile(runner.ledger, broker).ok
+
+
+# --------------------------------------------------------------------------- #
+# Competencia binomial contra Black-Scholes (Parte 2)
+# --------------------------------------------------------------------------- #
+
+
+def _competencia(cap: int = 3):
+    from ita_options.execution.ledger import Ledger
+    from ita_options.execution.model_rv import CompetingModels
+
+    ledger = Ledger()
+    settings = {m: RVSettings(model=m, execution="maker", min_edge_usd=5.0, max_signals=6, moneyness_band=0.2)
+                for m in ("crr", "bsm")}
+    return ledger, CompetingModels(ledger, ExecutionCosts(), settings, cap_per_model=cap)
+
+
+def test_competencia_atribuye_cada_senal_a_su_modelo_y_respeta_el_cupo() -> None:
+    _, source = _competencia(cap=2)
+    signals = source(_chain())
+    models = signals["detector"].map(source.model_of)
+    assert set(models) <= {"crr", "bsm"}
+    assert (models.value_counts() <= 2).all()
+
+
+def test_competencia_no_ejecuta_dos_veces_las_mismas_patas() -> None:
+    ledger, source = _competencia(cap=6)
+    signals = source(_chain())
+    keys = [source.legs_key(legs) for legs in signals["leg_spec"]]
+    assert len(keys) == len(set(keys))
+    # Sobre una cadena del modelo, CRR y BSM eligen estructuras parecidas: hay duplicados descartados.
+    assert ledger.events("senal_duplicada")
+
+
+def test_competencia_alterna_la_prioridad_entre_modelos() -> None:
+    ledger, source = _competencia()
+    chain = _chain()
+    source(chain)
+    source(chain)
+    import json
+
+    priorities = [json.loads(e["payload_json"])["prioridad"] for e in ledger.events("senales_por_modelo")]
+    assert priorities == ["crr", "bsm"]
