@@ -276,8 +276,11 @@ def detect_model_rv(
         (base["bid"] > 0) & (base["ask"] > base["bid"])
         & (base["spread_rel"] <= settings.max_leg_spread_rel)
     ]
-    if "dte" in base:
-        base = base.loc[base["dte"].between(settings.min_dte, settings.max_dte)]
+    if "dte" not in base:
+        # Sin días al vencimiento no se puede respetar la ventana operable: mejor
+        # fallar que operar vencimientos que la estrategia excluye.
+        raise KeyError("La cadena no trae 'dte': no se puede aplicar la ventana de vencimientos.")
+    base = base.loc[base["dte"].between(settings.min_dte, settings.max_dte)]
     signals: list[dict[str, object]] = []
     for (_, _), slice_ in base.groupby(["underlying", "expiration"]):
         smile = fit_smile(chain.loc[(chain["underlying"] == slice_["underlying"].iloc[0])
