@@ -147,3 +147,16 @@ def test_el_strike_vectorial_coincide_con_el_escalar() -> None:
     a, _, _ = vec_crr(spots, np.array([95.0, 105.0]), 0.2, 0.03, np.array([0.3, 0.3]), "c")
     assert a[0] == pytest.approx(vec_crr(spots[:1], 95.0, 0.2, 0.03, np.array([0.3]), "c")[0][0])
     assert a[1] == pytest.approx(vec_crr(spots[:1], 105.0, 0.2, 0.03, np.array([0.3]), "c")[0][0])
+
+
+def test_con_dividendo_la_riqueza_del_accionista_es_martingala() -> None:
+    """S* = S - D difunde: S_T más el dividendo capitalizado, descontado, vale S_0."""
+    cal = np.arange(21) / 252
+    rate = 0.05
+    p = simulate_gbm(np.array([100.0]), np.array([0.3]), ONE, rate, 20, 40000, np.random.default_rng(9),
+                     ex_days=[[(5, 2.0)]], calendar=cal)
+    wealth = p.spot[:, -1, 0] + 2.0 * np.exp(rate * (cal[-1] - cal[5]))
+    assert np.mean(wealth) * np.exp(-rate * cal[-1]) == pytest.approx(100.0, rel=0.004)
+    # El precio cae el dividendo en la fecha ex.
+    gap = p.spot[:, 5, 0] - p.spot[:, 4, 0]
+    assert np.median(gap) < -1.5

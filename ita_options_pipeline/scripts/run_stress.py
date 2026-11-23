@@ -49,6 +49,7 @@ from ita_options.execution.ledger import Ledger  # noqa: E402
 from ita_options.execution.model_rv import CompetingModels, RVSettings, fit_smile  # noqa: E402
 from ita_options.escrowed import implied_vol  # noqa: E402
 from ita_options.greeks import crr_price  # noqa: E402
+from ita_options.stress import _pv_remaining  # noqa: E402
 from ita_options.stress import (  # noqa: E402
     Book, HedgeOption, Leg, RiskRules, ScenarioPaths, Structure, risk_metrics, run_account,
     simulate_gbm, simulate_heston, simulate_merton,
@@ -236,10 +237,14 @@ def ex_days(dates: list[date], chain: pd.DataFrame) -> list[list[tuple[int, floa
 
 
 def deterministic(spot0: np.ndarray, vol0: np.ndarray, rets: np.ndarray, dvol: np.ndarray, factor: float,
-                  paid: np.ndarray) -> ScenarioPaths:
-    """Un camino: ``rets`` ``(D, U)`` retornos log diarios, ``dvol`` ``(D, U)`` cambios de vol ATM."""
-    log_s = np.vstack([np.log(spot0), np.log(spot0) + np.cumsum(rets, axis=0)])
-    spot = np.exp(log_s) - np.cumsum(paid, axis=0)
+                  paid: np.ndarray, pv: np.ndarray) -> ScenarioPaths:
+    """Un camino: ``rets`` ``(D, U)`` retornos log diarios de :math:`S^*`, ``dvol`` cambios de vol ATM.
+
+    Mismo modelo escrowed que los Monte Carlo: :math:`S = S^* + D(t)`.
+    """
+    star0 = spot0 - pv[0]
+    log_s = np.vstack([np.log(star0), np.log(star0) + np.cumsum(rets, axis=0)])
+    spot = np.exp(log_s) + pv
     vol = np.vstack([vol0, vol0 + np.cumsum(dvol, axis=0)])
     return ScenarioPaths(spot[None], np.maximum(vol, 0.05)[None], paid, factor)
 
@@ -258,20 +263,20 @@ def scenarios(params: dict, dates, cal, paid_days, paths: int, seed: int) -> dic
     rate = params["rate"]
     rng = np.random.default_rng(seed)
     out: dict[str, tuple[str, ScenarioPaths]] = {}
-    out["gbm"] = ("GBM con la vol implícita ATM", simulate_gbm(s0, v0, corr, rate, HORIZON, paths, rng, paid_days))
+    out["gbm"] = ("GBM con la vol implícita ATM", simulate_gbm(s0, v0, corr, rate, HORIZON, paths, rng, paid_days, calendar=cal))
     out["heston"] = ("Heston calibrado a la IV de DoltHub", simulate_heston(
         s0, v0 ** 2, np.clip(h["kappa"], 1, 25), np.clip(h["theta"], 0.01, 1), np.array(h["xi"]),
-        np.array(h["rho"]), corr, rate, HORIZON, paths, rng, paid_days))
+        np.array(h["rho"]), corr, rate, HORIZON, paths, rng, paid_days, calendar=cal))
     out["heston_estres"] = ("Heston estresado: theta=(1,5 vol)^2, kappa=3, xi=1, rho=-0,7", simulate_heston(
         s0, v0 ** 2, np.full(3, 3.0), (1.5 * v0) ** 2, np.full(3, 1.0), np.full(3, -0.7), corr, rate, HORIZON,
-        paths, rng, paid_days))
+        paths, rng, paid_days, calendar=cal))
     out["merton"] = ("Merton calibrado (5 años, saltos > 4 MAD)", simulate_merton(
         s0, np.array(m["sigma_difusion"]), v0, np.array(m["lambda"]), np.array(m["mu_j"]),
-        np.array(m["sigma_j"]), corr, rate, HORIZON, paths, rng, paid_days))
+        np.array(m["sigma_j"]), corr, rate, HORIZON, paths, rng, paid_days, calendar=cal))
     out["merton_sectorial"] = ("Merton sectorial: 4 saltos/año comunes de -8% (sd 5%)", simulate_merton(
         s0, np.array(m["sigma_difusion"]), v0, np.full(3, 4.0), np.full(3, -0.08), np.full(3, 0.05), corr, rate,
-        HORIZON, paths, rng, paid_days, common=True))
-    liq = simulate_gbm(s0, v0, corr, rate, HORIZON, paths, rng, paid_days)
+        HORIZON, paths, rng, paid_days, common=True, calendar=cal))
+    liq = simulate_gbm(s0, v0, corr, rate, HORIZON, paths, rng, paid_days, calendar=cal)
     liq.spread_factor = 3.0
     out["liquidez"] = ("GBM con spreads x3 al liquidar", liq)
 
@@ -279,12 +284,13 @@ def scenarios(params: dict, dates, cal, paid_days, paths: int, seed: int) -> dic
     for u, flows in enumerate(paid_days):
         for day, amount in flows:
             paid[day, u] += amount
+    pv = _pv_remaining(s0, paid_days, rate, cal)
     zeros = np.zeros((HORIZON, 3))
 
     def shock(ret, dv, factor=1.0):
         r = zeros.copy(); r[0] = ret
         d = zeros.copy(); d[0] = dv
-        return deterministic(s0, v0, r, d, factor, paid)
+        return deterministic(s0, v0, r, d, factor, paid, pv)
 
     out["caida_15"] = ("Caída de 15% en un día, vol +15 pts, spreads x3",
                        shock(np.full(3, math.log(0.85)), np.full(3, 0.15), 3.0))
@@ -296,7 +302,7 @@ def scenarios(params: dict, dates, cal, paid_days, paths: int, seed: int) -> dic
                             ("aranceles", "Repetición aranceles (10 ruedas al 07/04/2025)", "2025-04-07")):
         rets = replay(params["returns"], end)
         dv = np.where(rets < 0, -0.75 * rets, 0.0)
-        out[key] = (label, deterministic(s0, v0, rets, dv, 2.0, paid))
+        out[key] = (label, deterministic(s0, v0, rets, dv, 2.0, paid, pv))
     return out
 
 

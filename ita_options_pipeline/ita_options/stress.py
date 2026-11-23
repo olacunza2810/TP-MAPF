@@ -34,7 +34,9 @@ retornos diarios):
   de Poisson), que es el riesgo de evento propio de defensa (presupuesto,
   contratos, geopolítica).
 
-En la fecha ex el precio cae el dividendo; la acción de la cobertura lo cobra.
+Los dividendos siguen el mismo modelo escrowed que el pricer: la difusión se
+aplica a :math:`S^* = S - D(t)` y :math:`S = S^* + D(t)`, así que en la fecha
+ex el precio cae el dividendo; la acción de la cobertura lo cobra.
 
 Revaluación
 -----------
@@ -203,21 +205,40 @@ def _ex_drops(spot: np.ndarray, ex_days: Sequence[Sequence[tuple[int, float]]]) 
     return paid
 
 
-def _apply_dividends(log_s: np.ndarray, paid: np.ndarray) -> np.ndarray:
-    """Exponencia y resta los dividendos acumulados a partir de cada fecha ex.
+def _pv_remaining(s0: np.ndarray, ex_days: Sequence, rate: float, calendar: np.ndarray) -> np.ndarray:
+    """``(D+1, U)``: valor presente en cada día de los dividendos que faltan cobrar en el horizonte."""
+    D1, U = len(calendar), len(s0)
+    pv = np.zeros((D1, U))
+    for u, flows in enumerate(ex_days):
+        for day, amount in flows:
+            if 0 < day < D1:
+                t_ex = calendar[day]
+                for t in range(day):
+                    pv[t, u] += amount * math.exp(-rate * (t_ex - calendar[t]))
+    return pv
 
-    Se simula la parte sin dividendos y se le resta lo cobrado: en la fecha ex
-    el precio cae el dividendo y la dinámica sigue desde ahí.
+
+def _escrowed_spot(log_star: np.ndarray, pv: np.ndarray) -> np.ndarray:
+    r"""Spot a partir de la parte riesgosa: :math:`S_t = S^*_t + D(t)`.
+
+    La difusión se aplica a :math:`S^* = S - D` (el mismo modelo escrowed con
+    el que se valúa); en la fecha ex :math:`D(t)` cae el dividendo y el precio
+    cae con él.
     """
-    spot = np.exp(log_s)
-    drop = np.cumsum(paid, axis=0)[None, :, :]
-    return np.maximum(spot - drop, 0.01)
+    return np.exp(log_star) + pv[None, :, :]
+
+
+def _calendar(days: int, calendar: np.ndarray | None) -> np.ndarray:
+    return np.arange(days + 1) / TRADING_DAYS if calendar is None else np.asarray(calendar, float)
 
 
 def simulate_gbm(s0: np.ndarray, sigma: np.ndarray, corr: np.ndarray, rate: float, days: int, paths: int,
-                 rng: np.random.Generator, ex_days: Sequence = (), substeps: int = 4) -> ScenarioPaths:
-    """GBM correlado. ``sigma`` es la volatilidad anual de cada subyacente."""
+                 rng: np.random.Generator, ex_days: Sequence = (), substeps: int = 4,
+                 calendar: np.ndarray | None = None) -> ScenarioPaths:
+    """GBM correlado sobre :math:`S^*`. ``sigma`` es la volatilidad anual de cada subyacente."""
     U = len(s0)
+    pv = _pv_remaining(s0, ex_days, rate, _calendar(days, calendar))
+    s0 = s0 - pv[0]
     L = np.linalg.cholesky(corr)
     dt = 1.0 / (TRADING_DAYS * substeps)
     log_s = np.empty((paths, days + 1, U))
@@ -230,17 +251,20 @@ def simulate_gbm(s0: np.ndarray, sigma: np.ndarray, corr: np.ndarray, rate: floa
         log_s[:, day] = x
     paid = _ex_drops(log_s, ex_days)
     vol = np.broadcast_to(sigma, log_s.shape).copy()
-    return ScenarioPaths(_apply_dividends(log_s, paid), vol, paid)
+    return ScenarioPaths(_escrowed_spot(log_s, pv), vol, paid)
 
 
 def simulate_heston(s0: np.ndarray, v0: np.ndarray, kappa: np.ndarray, theta: np.ndarray, xi: np.ndarray,
                     rho: np.ndarray, corr: np.ndarray, rate: float, days: int, paths: int,
-                    rng: np.random.Generator, ex_days: Sequence = (), substeps: int = 4) -> ScenarioPaths:
+                    rng: np.random.Generator, ex_days: Sequence = (), substeps: int = 4,
+                    calendar: np.ndarray | None = None) -> ScenarioPaths:
     """Heston con truncamiento completo; correlación entre subyacentes por Cholesky.
 
     La volatilidad ATM implícita del escenario es :math:`\\sqrt{v_t^+}`.
     """
     U = len(s0)
+    pv = _pv_remaining(s0, ex_days, rate, _calendar(days, calendar))
+    s0 = s0 - pv[0]
     L = np.linalg.cholesky(corr)
     dt = 1.0 / (TRADING_DAYS * substeps)
     log_s = np.empty((paths, days + 1, U))
@@ -259,13 +283,13 @@ def simulate_heston(s0: np.ndarray, v0: np.ndarray, kappa: np.ndarray, theta: np
         log_s[:, day] = x
         vol[:, day] = np.sqrt(np.maximum(v, 0.0))
     paid = _ex_drops(log_s, ex_days)
-    return ScenarioPaths(_apply_dividends(log_s, paid), vol, paid)
+    return ScenarioPaths(_escrowed_spot(log_s, pv), vol, paid)
 
 
 def simulate_merton(s0: np.ndarray, sigma_diff: np.ndarray, implied: np.ndarray, lam: np.ndarray,
                     mu_j: np.ndarray, sigma_j: np.ndarray, corr: np.ndarray, rate: float, days: int,
                     paths: int, rng: np.random.Generator, ex_days: Sequence = (), common: bool = False,
-                    jump_corr: float = 0.7, substeps: int = 4) -> ScenarioPaths:
+                    jump_corr: float = 0.7, substeps: int = 4, calendar: np.ndarray | None = None) -> ScenarioPaths:
     """Merton con saltos lognormales; ``common=True`` usa un solo proceso de Poisson sectorial.
 
     Args:
@@ -275,6 +299,8 @@ def simulate_merton(s0: np.ndarray, sigma_diff: np.ndarray, implied: np.ndarray,
         jump_corr: Correlación de los tamaños de salto entre subyacentes (sectorial).
     """
     U = len(s0)
+    pv = _pv_remaining(s0, ex_days, rate, _calendar(days, calendar))
+    s0 = s0 - pv[0]
     L = np.linalg.cholesky(corr)
     Lj = np.linalg.cholesky(np.full((U, U), jump_corr) + (1 - jump_corr) * np.eye(U))
     dt = 1.0 / (TRADING_DAYS * substeps)
@@ -296,7 +322,7 @@ def simulate_merton(s0: np.ndarray, sigma_diff: np.ndarray, implied: np.ndarray,
         log_s[:, day] = x
     paid = _ex_drops(log_s, ex_days)
     vol = np.broadcast_to(implied, log_s.shape).copy()
-    return ScenarioPaths(_apply_dividends(log_s, paid), vol, paid)
+    return ScenarioPaths(_escrowed_spot(log_s, pv), vol, paid)
 
 
 # --------------------------------------------------------------------------- #
