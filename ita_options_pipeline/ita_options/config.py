@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 OptionsFeedName = Literal["opra", "indicative"]
-DataMode = Literal["nbbo", "daily"]
+DataMode = Literal["nbbo", "daily", "dolthub"]
 
 #: Universo del trabajo práctico. Subyacentes individuales pertenecientes al ITA.
 #: El ETF NO es subyacente válido según la consigna. Se eligen tres regímenes de
@@ -32,6 +32,28 @@ DataMode = Literal["nbbo", "daily"]
 #: LMT se prefiere a GE porque GE se escindió en tres empresas en 2024 y su serie
 #: histórica no es representativa de la entidad actual. Ver ``calibration.py``.
 DEFAULT_UNDERLYINGS: Final[tuple[str, ...]] = ("RTX", "BA", "LMT")
+
+
+def _read_dotenv() -> dict[str, str]:
+    """Lee ``ALPACA_*`` de un archivo ``.env`` en el directorio actual o en el del pipeline.
+
+    Sirve para que el proceso programado (tarea de Windows) encuentre las claves
+    sin depender de la sesión de la consola. El ``.env`` está en ``.gitignore``.
+    """
+    from pathlib import Path as _Path
+
+    for folder in (_Path.cwd(), _Path(__file__).resolve().parents[1]):
+        path = folder / ".env"
+        if path.exists():
+            out: dict[str, str] = {}
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                out[name.strip()] = value.strip().strip('"').strip("'")
+            return out
+    return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +75,15 @@ class AlpacaCredentials:
         Raises:
             RuntimeError: si alguna variable de entorno no está definida.
         """
-        key = os.environ.get("ALPACA_API_KEY")
-        secret = os.environ.get("ALPACA_SECRET_KEY")
+        values = _read_dotenv()
+        values.update({k: v for k, v in os.environ.items() if k.startswith("ALPACA_")})
+        key = values.get("ALPACA_API_KEY")
+        secret = values.get("ALPACA_SECRET_KEY")
         if not key or not secret:
             raise RuntimeError(
-                "Faltan ALPACA_API_KEY / ALPACA_SECRET_KEY en el entorno."
+                "Faltan ALPACA_API_KEY / ALPACA_SECRET_KEY en el entorno o en el archivo .env."
             )
-        paper = os.environ.get("ALPACA_PAPER", "true").lower() != "false"
+        paper = values.get("ALPACA_PAPER", "true").lower() != "false"
         return cls(api_key=key, secret_key=secret, paper=paper)
 
 
@@ -85,7 +109,9 @@ class LiquidityThresholds:
         data_mode: ``nbbo`` para cotizaciones con bid/ask real (recorder de
             Alpaca). ``daily`` para velas diarias (Polygon gratuito), donde no
             hay spread observado ni open interest histórico: la liquidez se
-            juzga por el volumen de la rueda anterior.
+            juzga por el volumen de la rueda anterior. ``dolthub`` para la foto
+            diaria de DoltHub: bid y ask observados, sin volumen ni open
+            interest, así que la liquidez se juzga por el spread.
         min_prev_day_volume: Sólo en modo ``daily``. Volumen de la rueda
             anterior estrictamente mayor a este valor.
     """
@@ -104,6 +130,19 @@ class LiquidityThresholds:
     def for_daily_bars(cls, **overrides: object) -> "LiquidityThresholds":
         """Umbrales para velas diarias: sin open interest ni spread."""
         base: dict[str, object] = {"data_mode": "daily", "min_open_interest": 0}
+        return cls(**{**base, **overrides})  # type: ignore[arg-type]
+
+    @classmethod
+    def for_dolthub(cls, **overrides: object) -> "LiquidityThresholds":
+        """Umbrales para la foto diaria de DoltHub: spread observado, sin volumen ni OI.
+
+        El spread relativo máximo sube a 25% porque la mediana observada en la
+        foto de DoltHub ronda el 18%: con 15% se descarta más de la mitad de la
+        cadena. Es un hiperparámetro del backtest y se recalibra in-sample.
+        """
+        base: dict[str, object] = {
+            "data_mode": "dolthub", "min_open_interest": 0, "max_relative_spread": 0.25,
+        }
         return cls(**{**base, **overrides})  # type: ignore[arg-type]
 
 
@@ -215,6 +254,11 @@ class ExecutionSettings:
             reconciliación antes de detener las entradas.
         max_consecutive_errors: Errores de datos o API seguidos que detienen
             las entradas.
+        take_profit_fraction: Si se define, cierra la estructura cuando la
+            ganancia no realizada alcanza esa fracción del edge anunciado. Es la
+            salida natural de una estrategia de valor relativo: el edge se
+            realiza cuando el mercado converge al modelo, no al vencimiento.
+        min_dte: Días mínimos al vencimiento del universo en vivo.
     """
 
     contracts: int = 1
@@ -244,6 +288,8 @@ class ExecutionSettings:
     kill_file: Path = Path("KILL")
     reconcile_tolerance_cycles: int = 2
     max_consecutive_errors: int = 3
+    take_profit_fraction: float | None = None
+    min_dte: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import Any, Iterator, Literal, Sequence
+from datetime import date, timedelta
+from typing import Any, Iterator, Literal, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -239,6 +239,10 @@ class StrategyParams:
             ``bid_open``/``ask_open`` de esa rueda, es decir, en la apertura: la
             orden se llena a las 09:30 y la posición ya queda sujeta al
             vencimiento y al stop-loss del cierre de la misma rueda.
+        fresh_quotes_only: Si ``True``, en modo ``quote`` cada pata de opción
+            se ejecuta sólo contra una cotización sellada en el instante de
+            ejecución. Con fotos diarias (DoltHub) evita llenar una orden contra
+            la cotización de una rueda anterior cuando el contrato no aparece.
     """
 
     min_net_edge: float = 5.0
@@ -255,6 +259,7 @@ class StrategyParams:
     require_edge_at_execution: bool = True
     min_edge_at_execution: float | None = None
     execution_price: Literal["quote", "open"] = "quote"
+    fresh_quotes_only: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Serializa los hiperparámetros para el registro de la corrida."""
@@ -273,7 +278,78 @@ class StrategyParams:
             "require_edge_at_execution": self.require_edge_at_execution,
             "min_edge_at_execution": self.min_edge_at_execution,
             "execution_price": self.execution_price,
+            "fresh_quotes_only": self.fresh_quotes_only,
         }
+
+
+@dataclass(frozen=True)
+class CarryModel:
+    r"""Costo de tener la posición abierta: intereses, préstamo y dividendos.
+
+    La entrega parcial no cobraba nada de esto, y por eso la paridad capturaba
+    más que su propio edge (captura de 1,20): una conversión inmoviliza el
+    nocional de la acción y cobra o paga los dividendos de la tenencia.
+
+    - **Intereses sobre la caja neta de entrada.** Un débito se financia a
+      :math:`r + s_f`; un crédito rinde :math:`r - s_f`, con :math:`s_f` el
+      ``funding_spread``. Interés simple ACT/365 sobre los días de tenencia.
+    - **Préstamo** de la acción vendida en corto: :math:`h\,|N_{short}|\,t`.
+    - **Dividendos** con fecha ex en :math:`(t_{apertura}, t_{cierre}]`: los
+      cobra la acción comprada y los paga la vendida.
+
+    Attributes:
+        rate: Tasa libre de riesgo por defecto, anual.
+        rate_by_date: Tasa observada por fecha; si existe, se usa la del día de
+            apertura.
+        funding_spread: Spread anual sobre la tasa.
+        borrow_rate: Costo anual del préstamo de la acción.
+        dividends: Tabla con ``ticker``, ``ex_dividend_date`` y ``cash_amount``.
+    """
+
+    rate: float = 0.042
+    rate_by_date: Mapping[date, float] | None = None
+    funding_spread: float = 0.005
+    borrow_rate: float = 0.005
+    dividends: pd.DataFrame | None = None
+
+    def rate_at(self, day: date) -> float:
+        """Tasa vigente en ``day`` (la última observada no posterior)."""
+        if not self.rate_by_date:
+            return self.rate
+        known = [d for d in self.rate_by_date if d <= day]
+        return float(self.rate_by_date[max(known)]) if known else self.rate
+
+    def ex_dates(self, ticker: str, after: date, until: date) -> list[tuple[date, float]]:
+        """Dividendos del ticker con fecha ex en ``(after, until]``."""
+        if self.dividends is None or self.dividends.empty:
+            return []
+        table = self.dividends
+        ex = pd.to_datetime(table["ex_dividend_date"]).dt.date
+        mask = (table["ticker"] == ticker) & (ex > after) & (ex <= until)
+        return [(d, float(a)) for d, a in zip(ex[mask], table.loc[mask, "cash_amount"])]
+
+    def charges(
+        self, position: "Position", closed_at: pd.Timestamp, multiplier: float, contracts: float
+    ) -> tuple[float, float, float]:
+        """Devuelve ``(intereses, préstamo, dividendos)`` en USD, con signo de caja."""
+        opened = pd.Timestamp(position.opened_at).tz_convert(_NY).date()
+        closed = pd.Timestamp(closed_at).tz_convert(_NY).date()
+        days = max((closed - opened).days, 0)
+        rate = self.rate_at(opened)
+        cash = position.entry_cash
+        cash_rate = rate - self.funding_spread if cash > 0 else rate + self.funding_spread
+        interest = cash * cash_rate * days / 365.0
+        borrow = 0.0
+        dividends = 0.0
+        for leg in position.legs:
+            if leg["kind"] != "stock":
+                continue
+            shares = float(leg["qty"]) * multiplier * contracts
+            if shares < 0:
+                borrow -= abs(shares) * float(leg["price"]) * self.borrow_rate * days / 365.0
+            for _, amount in self.ex_dates(position.underlying, opened, closed):
+                dividends += shares * amount
+        return interest, borrow, dividends
 
 
 @dataclass(slots=True)
@@ -313,6 +389,9 @@ class Position:
     exit_reason: str = ""
     signal_at: pd.Timestamp | None = None
     execution_edge: float = float("nan")
+    carry_interest: float = 0.0
+    carry_borrow: float = 0.0
+    dividend_cash: float = 0.0
 
     @property
     def is_open(self) -> bool:
@@ -321,12 +400,15 @@ class Position:
 
     @property
     def realized_pnl(self) -> float:
-        """P&L realizado, neto de comisiones de entrada y salida."""
+        """P&L realizado, neto de comisiones, intereses, préstamo y dividendos."""
         return (
             self.entry_cash
             + self.exit_cash
             - self.entry_commission
             - self.exit_commission
+            + self.carry_interest
+            + self.carry_borrow
+            + self.dividend_cash
         )
 
 
@@ -382,6 +464,7 @@ class ArbitrageBacktester:
         quotes: pd.DataFrame,
         underlying: pd.DataFrame,
         costs: ExecutionCosts | None = None,
+        carry: CarryModel | None = None,
     ) -> None:
         """Inicializa el backtester.
 
@@ -393,6 +476,7 @@ class ArbitrageBacktester:
         self._quotes = quotes
         self._underlying = underlying
         self._costs = costs or ExecutionCosts()
+        self._carry = carry
 
     # ------------------------------------------------------------------ #
     # Valuación
@@ -408,8 +492,8 @@ class ArbitrageBacktester:
         formas más comunes de inflar un backtest de arbitraje.
         """
         if leg["kind"] == "stock":
-            spot = view.spot(str(leg["symbol"]))
-            return None if not np.isfinite(spot) else spot
+            price = self._stock_price(view, str(leg["symbol"]), "bid" if leg["qty"] > 0 else "ask")
+            return None if not np.isfinite(price) else price
 
         quote = view.last_quote(str(leg["symbol"]))
         if quote is None:
@@ -417,6 +501,12 @@ class ArbitrageBacktester:
         side = "bid" if leg["qty"] > 0 else "ask"
         price = float(quote[side])
         return price if np.isfinite(price) and price > 0 else None
+
+    @staticmethod
+    def _stock_price(view: "PointInTimeView", symbol: str, side: str) -> float:
+        """Precio de la acción por lado si el subyacente trae ``bid``/``ask``; si no, el cierre."""
+        price = view.underlying_field(symbol, side)
+        return price if np.isfinite(price) else view.spot(symbol)
 
     def _settlement_value(
         self, leg: dict[str, Any], view: PointInTimeView, underlying: str
@@ -499,7 +589,7 @@ class ArbitrageBacktester:
                 spot = (
                     view.underlying_field(str(leg["symbol"]), "open")
                     if at_open
-                    else view.spot(str(leg["symbol"]))
+                    else self._stock_price(view, str(leg["symbol"]), "ask" if leg["qty"] > 0 else "bid")
                 )
                 if not np.isfinite(spot):
                     return None, "no_quote"
@@ -509,7 +599,8 @@ class ArbitrageBacktester:
                 # de una rueda anterior sería ejecutar a un precio que ya no
                 # existía cuando se envió la orden.
                 symbol = str(leg["symbol"])
-                quote = view.quote_now(symbol) if at_open else view.last_quote(symbol)
+                fresh = at_open or params.fresh_quotes_only
+                quote = view.quote_now(symbol) if fresh else view.last_quote(symbol)
                 if quote is None:
                     return None, "no_quote"
                 side = "ask" if leg["qty"] > 0 else "bid"
@@ -568,6 +659,22 @@ class ArbitrageBacktester:
                 for leg in position.legs
             ) * self._costs.multiplier
             commission = 0.0
+        elif reason == "early_assignment":
+            # El call corto se asigna: se entrega la acción a K. Los calls cortos
+            # liquidan por valor intrínseco; el resto de las patas, a mercado.
+            spot = view.spot(position.underlying)
+            value = 0.0
+            commission = 0.0
+            for leg in position.legs:
+                if leg["kind"] == "option" and leg["option_type"] == "c" and leg["qty"] < 0:
+                    value += leg["qty"] * max(spot - float(leg["strike"]), 0.0)
+                elif leg["kind"] == "stock":
+                    value += leg["qty"] * spot
+                else:
+                    price = self._leg_close_price(leg, view)
+                    value += leg["qty"] * (price if price is not None else 0.0)
+                    commission += self._costs.commission_per_contract
+            value *= self._costs.multiplier
         else:
             marked = self._mark_to_market(position, view)
             if marked is None:
@@ -580,6 +687,44 @@ class ArbitrageBacktester:
         position.exit_commission = commission * params.contracts_per_trade
         position.closed_at = view.now
         position.exit_reason = reason
+        if self._carry is not None:
+            interest, borrow, dividends = self._carry.charges(
+                position, view.now, self._costs.multiplier, params.contracts_per_trade
+            )
+            position.carry_interest = interest
+            position.carry_borrow = borrow
+            position.dividend_cash = dividends
+
+    def _assignment_due(
+        self, position: Position, view: "PointInTimeView", next_stamp: pd.Timestamp | None
+    ) -> bool:
+        """¿Asignan hoy el call corto de una posición con acción comprada?
+
+        Un call americano en el dinero se ejerce la víspera de la fecha ex si su
+        valor temporal es menor que el dividendo: quien lo ejerce cobra el
+        dividendo que de otro modo perdería. Las fechas ex se anuncian con
+        semanas de anticipación, así que mirar la de mañana no es lookahead.
+        """
+        if self._carry is None or next_stamp is None:
+            return False
+        if not any(l["kind"] == "stock" and l["qty"] > 0 for l in position.legs):
+            return False
+        today = pd.Timestamp(view.now).tz_convert(_NY).date()
+        tomorrow = pd.Timestamp(next_stamp).tz_convert(_NY).date()
+        upcoming = self._carry.ex_dates(position.underlying, today, tomorrow)
+        if not upcoming:
+            return False
+        dividend = sum(amount for _, amount in upcoming)
+        spot = view.spot(position.underlying)
+        for leg in position.legs:
+            if leg["kind"] == "option" and leg["option_type"] == "c" and leg["qty"] < 0:
+                intrinsic = spot - float(leg["strike"])
+                quote = view.last_quote(str(leg["symbol"]))
+                if intrinsic > 0 and quote is not None:
+                    extrinsic = float(quote["ask"]) - intrinsic
+                    if extrinsic < dividend:
+                        return True
+        return False
 
     # ------------------------------------------------------------------ #
     # Loop principal
@@ -625,6 +770,7 @@ class ArbitrageBacktester:
             multiplier=self._costs.multiplier,
             min_net_edge=params.min_net_edge,
             stock_borrow_rate=self._costs.stock_borrow_rate,
+            funding_spread=self._costs.funding_spread,
         )
 
         if params.execution_price not in ("quote", "open"):
@@ -657,7 +803,8 @@ class ArbitrageBacktester:
                 bump(position.detector, "filled")
                 next_id += 1
 
-        for stamp in stamps:
+        for index, stamp in enumerate(stamps):
+            next_stamp = stamps[index + 1] if index + 1 < len(stamps) else None
             view.advance_to(stamp)
             if at_open:
                 execute_ready(stamp)
@@ -670,6 +817,10 @@ class ArbitrageBacktester:
                         self._close(position, view, "expiry", params)
                         closed.append(position)
                         continue
+                if self._assignment_due(position, view, next_stamp):
+                    self._close(position, view, "early_assignment", params)
+                    closed.append(position)
+                    continue
                 if params.stop_loss_usd is not None:
                     marked = self._mark_to_market(view=view, position=position)
                     if marked is not None:
@@ -773,7 +924,7 @@ class ArbitrageBacktester:
                 columns=[
                     "position_id", "detector", "underlying", "signal_at",
                     "opened_at", "closed_at", "entry_cash", "exit_cash",
-                    "commission", "pnl", "predicted_edge", "execution_edge",
+                    "commission", "carry_interest", "carry_borrow", "dividend_cash", "pnl", "predicted_edge", "execution_edge",
                     "edge_capture", "exit_reason",
                 ]
             )
@@ -788,6 +939,9 @@ class ArbitrageBacktester:
                 "entry_cash": p.entry_cash,
                 "exit_cash": p.exit_cash,
                 "commission": p.entry_commission + p.exit_commission,
+                "carry_interest": p.carry_interest,
+                "carry_borrow": p.carry_borrow,
+                "dividend_cash": p.dividend_cash,
                 "pnl": p.realized_pnl,
                 "predicted_edge": p.predicted_edge,
                 "execution_edge": p.execution_edge,

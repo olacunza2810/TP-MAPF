@@ -64,4 +64,4 @@ def test_paper_run_no_corre_dentro_de_un_event_loop(monkeypatch) -> None:
 
 
 def test_tickers_por_defecto() -> None:
-    assert parse_args(["backtest-daily"]).tickers == ["RTX", "BA"]
+    assert parse_args(["backtest-daily"]).tickers == ["RTX", "BA", "LMT"]

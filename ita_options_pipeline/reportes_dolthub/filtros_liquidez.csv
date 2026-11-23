@@ -1,0 +1,9 @@
+criterio,filas_excluidas,pct_del_total
+volumen_desconocido,95290,100.0
+open_interest_desconocido,95290,100.0
+spread_relativo_excesivo,38773,40.68947423654109
+bid_nulo,7505,7.875957603106307
+mid_por_debajo_del_minimo,269,0.28229614859901353
+quote_cruzado,25,0.02623570154265925
+spot_no_alineado,0,0.0
+dte_fuera_de_rango,0,0.0

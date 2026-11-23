@@ -1,0 +1,133 @@
+{
+  "filas": 95290,
+  "explotables": 56492,
+  "supervivencia": 0.5928429006191626,
+  "ruedas": 181,
+  "desde": "2026-03-02",
+  "hasta": "2026-11-20",
+  "filas_por_subyacente": {
+    "LMT": 35600,
+    "BA": 31034,
+    "RTX": 28656
+  },
+  "spread_rel_mediano": 0.1850220264317181,
+  "exclusiones": {
+    "bid_nulo": 7505,
+    "quote_cruzado": 25,
+    "spread_relativo_excesivo": 38773,
+    "mid_por_debajo_del_minimo": 269,
+    "dte_fuera_de_rango": 0,
+    "spot_no_alineado": 0,
+    "volumen_desconocido": 95290,
+    "open_interest_desconocido": 95290
+  },
+  "desfase_spot_abs_mediano_pct": 0.18691257247633875,
+  "desfase_spot_abs_p90_pct": 1.256263919723577,
+  "dividendos": [
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-03-03",
+      "declaration_date": "2025-01-28",
+      "cash_amount": "3.3",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-06-02",
+      "declaration_date": "2025-05-09",
+      "cash_amount": "3.3",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-09-02",
+      "declaration_date": "2025-06-25",
+      "cash_amount": "3.3",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2025-12-01",
+      "declaration_date": "2025-10-09",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2026-03-02",
+      "declaration_date": "2026-02-06",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2026-06-01",
+      "declaration_date": "2026-05-12",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "LMT",
+      "ex_dividend_date": "2026-09-01",
+      "declaration_date": "2026-07-22",
+      "cash_amount": "3.45",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-02-21",
+      "declaration_date": "2025-01-31",
+      "cash_amount": "0.63",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-05-23",
+      "declaration_date": "2025-05-01",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-08-15",
+      "declaration_date": "2025-06-27",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2025-11-21",
+      "declaration_date": "2025-10-30",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-02-20",
+      "declaration_date": "2026-02-06",
+      "cash_amount": "0.68",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-05-22",
+      "declaration_date": "2026-04-30",
+      "cash_amount": "0.73",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-08-14",
+      "declaration_date": "2026-06-26",
+      "cash_amount": "0.73",
+      "fuente": "polygon"
+    },
+    {
+      "ticker": "RTX",
+      "ex_dividend_date": "2026-11-20",
+      "declaration_date": "2026-10-21",
+      "cash_amount": "0.73",
+      "fuente": "yahoo"
+    }
+  ]
+}

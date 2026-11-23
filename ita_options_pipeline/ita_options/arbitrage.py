@@ -97,12 +97,18 @@ class ExecutionCosts:
             de redondeo del feed y no sobreviven al slippage.
         stock_borrow_rate: Costo anual de shortear el subyacente. Sólo aplica a
             las estrategias que incluyen pata de acción (paridad put-call).
+        funding_spread: Spread anual sobre la tasa libre de riesgo al que se
+            financia la compra de la acción en una conversión. Una conversión
+            inmoviliza el nocional de la acción hasta el vencimiento: si se
+            descuenta el strike a la tasa libre de riesgo en lugar de a la tasa
+            de fondeo, el costo de tener la acción aparece como "arbitraje".
     """
 
     commission_per_contract: float = 0.65
     multiplier: float = 100.0
     min_net_edge: float = 5.0
     stock_borrow_rate: float = 0.0050
+    funding_spread: float = 0.0050
 
 
 def _empty_result() -> pd.DataFrame:
@@ -529,55 +535,86 @@ def detect_put_call_parity(
     tradable_only: bool = True,
     underlying_spread: float = 0.01,
 ) -> pd.DataFrame:
-    r"""Testea la paridad put-call en su forma americana.
+    r"""Testea la paridad put-call americana con dividendos discretos y fondeo.
 
-    **Corrección respecto del notebook (celda 39).** El original plantea la
-    igualdad europea
-
-    .. math::
-
-        C - P = S_0 e^{-q\tau} - K e^{-r\tau}
-
-    que **no vale** para opciones americanas: el derecho a ejercicio anticipado
-    rompe la igualdad y sólo sobreviven las desigualdades
+    **Cotas.** Para opciones americanas sobre una acción que paga dividendos
+    discretos, con :math:`D` el valor presente de los dividendos con fecha ex
+    dentro de la vida de la opción (Hull, cap. 11),
 
     .. math::
 
-        S e^{-q\tau} - K \;\le\; C_A - P_A \;\le\; S - K e^{-r\tau}
+        S - D - K \;\le\; C_A - P_A \;\le\; S - K e^{-r\tau}
 
-    Como RTX y BA son americanas, aplicar la versión europea genera falsos
-    positivos sistemáticos, concentrados justamente en los contratos ITM donde
-    la prima de ejercicio anticipado es mayor.
+    El notebook de cátedra usaba la igualdad europea, y la entrega parcial un
+    yield continuo :math:`S e^{-q\tau}`. Con un dividendo trimestral de LMT
+    (USD 3,45) a pocos días de la fecha ex, el yield continuo subestima
+    :math:`D` en más de un dólar por acción y el dividendo aparece como
+    "arbitraje" en la conversión reversa. Es exactamente la posición de LMT
+    que disparó el kill-switch en la entrega parcial.
 
-    Violación superior (conversión): se vende el call al bid, se compra la put
-    al ask y se compra la acción al ask.
+    **Conversión** (viola la cota superior): se vende el call al bid, se compra
+    la put al ask y se compra la acción al ask, financiada a
+    :math:`r_b = r + \text{funding\_spread}`. El portafolio entrega :math:`K`
+    al vencimiento, o antes si asignan el call. El edge es
 
-    Violación inferior (conversión reversa): se compra el call al ask, se vende
-    la put al bid y se shortea la acción al bid, pagando el costo de borrow.
+    .. math::
+
+        C^{bid} - P^{ask} - S^{ask} + K e^{-r_b \tau}
+
+    Los dividendos que cobre la acción no se cuentan: si el call está en el
+    dinero, lo asignan antes de la fecha ex y el dividendo no llega.
+
+    **Conversión reversa** (viola la cota inferior): se compra el call al ask,
+    se vende la put al bid y se shortea la acción al bid. Se pagan los
+    dividendos y el préstamo de la acción, y la put vendida puede ser asignada
+    en cualquier momento (peor caso: pagar :math:`K` ya). El edge es
+
+    .. math::
+
+        S^{bid} - D - K - (C^{ask} - P^{bid}) - h\,S^{bid}\tau
+
+    con :math:`h` el costo anual del préstamo. Los intereses sobre lo cobrado
+    por la venta en corto no se cuentan: son ganancia sólo si no hay asignación.
+
+    **Incertidumbre del spot.** Si la cadena trae ``spot_uncertainty`` (USD por
+    acción), la acción se cotiza en la banda
+    :math:`[S - \tfrac{s}{2} - u,\; S + \tfrac{s}{2} + u]`. Sirve para fotos
+    de la cadena tomadas a una hora distinta del cierre de la acción
+    (DoltHub): la violación tiene que superar el desfase para contar.
+
+    **Correcciones respecto de la entrega parcial.** El borrow sumaba al crédito
+    de la reversa en lugar de restar, y el half-spread de la acción estaba con
+    el signo invertido en las dos cotas (las patas se valuaban bien, pero el
+    edge se calculaba con el lado contrario).
 
     Args:
-        chain: Cadena curada con ``underlying_price``, ``tau``,
-            ``risk_free_rate`` y ``dividend_yield``.
+        chain: Cadena curada con ``underlying_price``, ``tau`` y
+            ``risk_free_rate``. Usa ``pv_dividends`` si está; si no, aproxima
+            :math:`D = S(1-e^{-q\tau})` con ``dividend_yield``. Usa
+            ``spot_uncertainty`` si está.
         costs: Costos de ejecución.
         tradable_only: Restringir a filas explotables.
-        underlying_spread: Spread absoluto asumido sobre el subyacente, en USD.
-            RTX y BA cotizan típicamente con un tick de diferencia.
+        underlying_spread: Spread absoluto de la acción, en USD.
 
     Returns:
-        DataFrame de oportunidades.
+        Oportunidades con su ``leg_spec``.
     """
     costs = costs or ExecutionCosts()
-    data = _prepare(chain, tradable_only)
-    needed = {"underlying_price", "tau", "risk_free_rate", "dividend_yield"}
-    if not needed.issubset(data.columns):
-        _LOG.warning("Paridad omitida: faltan %s", sorted(needed - set(data.columns)))
+    if chain.empty:
+        return _empty_result()
+    needed = {"underlying_price", "tau", "risk_free_rate"}
+    missing = needed - set(chain.columns)
+    if missing:
+        raise KeyError(f"Faltan columnas para la paridad: {sorted(missing)}")
+
+    base = chain.loc[chain["is_tradable"]] if tradable_only and "is_tradable" in chain else chain
+    base = base.loc[(base["bid"] > 0) & (base["ask"] > 0)]
+    calls = base.loc[base["option_type"].str.lower().str[0] == "c"]
+    puts = base.loc[base["option_type"].str.lower().str[0] == "p"]
+    if calls.empty or puts.empty:
         return _empty_result()
 
     rows: list[dict[str, object]] = []
-    kind = data["option_type"].astype(str).str.lower().str[0]
-    calls = data.loc[kind == "c"]
-    puts = data.loc[kind == "p"]
-
     merged = calls.merge(
         puts, on=["underlying", "expiration", "strike"], suffixes=("_c", "_p")
     )
@@ -586,12 +623,22 @@ def detect_put_call_parity(
         strike = float(row["strike"])
         tau = float(row["tau_c"])
         rate = float(row["risk_free_rate_c"])
-        div = float(row["dividend_yield_c"])
-        if not np.isfinite([spot, tau, rate, div]).all() or tau <= 0:
+        if not np.isfinite([spot, tau, rate]).all() or tau <= 0 or spot <= 0:
             continue
+        if "pv_dividends_c" in row.index and pd.notna(row["pv_dividends_c"]):
+            dividends = float(row["pv_dividends_c"])
+        else:
+            q = float(row.get("dividend_yield_c", 0.0) or 0.0)
+            dividends = spot * (1.0 - np.exp(-q * tau))
+        uncertainty = 0.0
+        if "spot_uncertainty_c" in row.index and pd.notna(row["spot_uncertainty_c"]):
+            uncertainty = max(float(row["spot_uncertainty_c"]), 0.0)
 
-        half = underlying_spread / 2.0
-        borrow = spot * costs.stock_borrow_rate * tau
+        band = underlying_spread / 2.0 + uncertainty
+        stock_ask = spot + band
+        stock_bid = spot - band
+        funding = rate + costs.funding_spread
+        ticker = str(row.get("underlying", ""))
         call_row = pd.Series({
             "symbol": row.get("symbol_c"), "strike": strike,
             "option_type": "c", "expiration": row["expiration"],
@@ -601,8 +648,10 @@ def detect_put_call_parity(
             "option_type": "p", "expiration": row["expiration"],
         })
 
-        upper = (spot - half) - strike * np.exp(-rate * tau)
-        credit_conv = float(row["bid_c"]) - float(row["ask_p"]) - upper
+        credit_conv = (
+            float(row["bid_c"]) - float(row["ask_p"]) - stock_ask
+            + strike * np.exp(-funding * tau)
+        )
         if credit_conv > 0:
             rows.append(
                 _record(
@@ -617,13 +666,17 @@ def detect_put_call_parity(
                     (
                         _opt_leg(call_row, -1.0, float(row["bid_c"])),
                         _opt_leg(put_row, +1.0, float(row["ask_p"])),
-                        _stock_leg(+1.0, spot + half, str(row.get("underlying", ""))),
+                        _stock_leg(+1.0, stock_ask, ticker),
                     ),
                 )
             )
 
-        lower = (spot + half) * np.exp(-div * tau) - strike + borrow
-        credit_rev = lower - (float(row["ask_c"]) - float(row["bid_p"]))
+        borrow = stock_bid * costs.stock_borrow_rate * tau
+        credit_rev = (
+            stock_bid - dividends - strike
+            - (float(row["ask_c"]) - float(row["bid_p"]))
+            - borrow
+        )
         if credit_rev > 0:
             rows.append(
                 _record(
@@ -638,7 +691,7 @@ def detect_put_call_parity(
                     (
                         _opt_leg(call_row, +1.0, float(row["ask_c"])),
                         _opt_leg(put_row, -1.0, float(row["bid_p"])),
-                        _stock_leg(-1.0, spot - half, str(row.get("underlying", ""))),
+                        _stock_leg(-1.0, stock_bid, ticker),
                     ),
                 )
             )

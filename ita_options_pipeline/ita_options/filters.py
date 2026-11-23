@@ -104,6 +104,32 @@ def _nbbo_checks(
     return checks, {"volumen_desconocido"}
 
 
+def _dolthub_checks(
+    out: pd.DataFrame, thresholds: LiquidityThresholds
+) -> tuple[dict[str, pd.Series], set[str]]:
+    """Criterios sobre la foto diaria de DoltHub: bid y ask observados.
+
+    DoltHub no publica volumen ni open interest. Se reporta su ausencia, pero no
+    se la trata como cero (descartaría toda la cadena) ni como liquidez
+    (afirmaría algo que no se observó): la liquidez se juzga por el spread.
+    """
+    checks: dict[str, pd.Series] = {
+        "bid_nulo": out["bid"].fillna(0) <= thresholds.min_bid,
+        "quote_cruzado": out["spread_abs"].fillna(-1.0) <= 0.0,
+        "spread_relativo_excesivo": (
+            out["spread_rel"].isna() | (out["spread_rel"] >= thresholds.max_relative_spread)
+        ),
+        "mid_por_debajo_del_minimo": out["mid_price"].fillna(0) < thresholds.min_mid_price,
+        "dte_fuera_de_rango": (out["dte"] < thresholds.min_dte) | (out["dte"] > thresholds.max_dte),
+        "spot_no_alineado": out["underlying_price"].isna(),
+        "volumen_desconocido": out["volume"].isna() if "volume" in out else pd.Series(True, index=out.index),
+        "open_interest_desconocido": (
+            out["open_interest"].isna() if "open_interest" in out else pd.Series(True, index=out.index)
+        ),
+    }
+    return checks, {"volumen_desconocido", "open_interest_desconocido"}
+
+
 def _daily_checks(
     out: pd.DataFrame, thresholds: LiquidityThresholds
 ) -> tuple[dict[str, pd.Series], set[str]]:
@@ -175,7 +201,8 @@ def apply_liquidity_filters(
         Tupla ``(frame, reporte)``.
     """
     out = frame.copy()
-    build = _daily_checks if thresholds.data_mode == "daily" else _nbbo_checks
+    builders = {"daily": _daily_checks, "nbbo": _nbbo_checks, "dolthub": _dolthub_checks}
+    build = builders[thresholds.data_mode]
     checks, informational = build(out, thresholds)
 
     excluded = pd.Series(False, index=out.index)

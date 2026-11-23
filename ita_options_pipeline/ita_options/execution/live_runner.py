@@ -123,6 +123,7 @@ class LiveRunner:
         report_dir: Path = Path("reportes/paper"),
         timing: Timing | None = None,
         now: Callable[[], pd.Timestamp] | None = None,
+        signal_source: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
     ) -> None:
         self.broker = broker
         self.market = market_data
@@ -143,6 +144,11 @@ class LiveRunner:
         self._errors = 0
         self._reconcile_strikes = 0
         self._parity = ParitySequencer(broker, ledger, settings, self.costs, self.timing)
+        # Fuente de señales: por defecto los detectores de arbitraje; la estrategia
+        # de valor relativo (``model_rv``) se enchufa acá sin tocar el resto.
+        self._signal_source = signal_source or (
+            lambda chain: detect_live(chain, self.costs, self.settings.detectors)
+        )
 
     # -- control ------------------------------------------------------------
 
@@ -263,8 +269,13 @@ class LiveRunner:
             expirations = [leg["expiration"] for leg in strategy["legs"] if leg.get("expiration")]
             expires_today = bool(expirations) and min(expirations) <= today.isoformat()
             reason = None
+            predicted = float(strategy.get("predicted_edge") or 0.0)
+            contracts = int(strategy["contracts_open"] or 0)
+            take_profit = self.settings.take_profit_fraction
             if unrealized < -abs(self.settings.kill_switch_usd):
                 reason = "kill_switch"
+            elif take_profit is not None and predicted > 0 and unrealized >= take_profit * predicted * contracts:
+                reason = "convergencia"
             elif expires_today and self._minutes_to_close(now, clock) <= self.settings.entry_stop_minutes:
                 reason = "pre_expiry"
             elif strategy["state"] == "closing":
@@ -352,7 +363,7 @@ class LiveRunner:
         open_count = len(self.ledger.open_strategies())
         if open_count >= self.settings.max_open_strategies:
             return
-        signals = detect_live(chain, self.costs, self.settings.detectors)
+        signals = self._signal_source(chain)
         report.signals = len(signals)
         if signals.empty:
             return

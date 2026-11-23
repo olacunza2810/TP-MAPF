@@ -231,7 +231,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pipeline de datos de opciones ITA.")
     parser.add_argument("--data-root", default="data", help="Raíz del data lake.")
     parser.add_argument(
-        "--tickers", nargs="+", default=["RTX", "BA"], help="Subyacentes."
+        "--tickers", nargs="+", default=["RTX", "BA", "LMT"], help="Subyacentes."
     )
     parser.add_argument("--log-level", default="INFO")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -304,6 +304,17 @@ def _build_parser() -> argparse.ArgumentParser:
     paper.add_argument("--report-dir", default="reportes/paper")
     paper.add_argument("--detectors", nargs="+",
                        default=["monotonicity", "vertical_bound", "butterfly", "put_call_parity"])
+    paper.add_argument("--strategy", choices=["arbitrage", "rv_crr", "rv_bsm"], default="arbitrage",
+                       help="arbitrage: detectores model-free. rv_crr / rv_bsm: valor relativo en "
+                            "verticales y butterflies contra el binomial o Black-Scholes calibrado.")
+    paper.add_argument("--take-profit", type=float, default=None,
+                       help="Cierra al alcanzar esta fracción del edge anunciado (p. ej. 0.6).")
+    paper.add_argument("--min-dte", type=int, default=21)
+    paper.add_argument("--max-dte", type=int, default=75)
+    paper.add_argument("--min-edge", type=float, default=10.0,
+                       help="Edge neto mínimo por estructura, en USD.")
+    paper.add_argument("--fill-timeout", type=float, default=60.0,
+                       help="Segundos que una orden mleg de apertura espera el fill antes de cancelarse.")
 
     # ``--tickers`` también dentro de cada subcomando. SUPPRESS evita que el
     # default del subcomando pise el valor pasado antes del subcomando.
@@ -483,20 +494,37 @@ def _run_paper(args: argparse.Namespace) -> None:
         contracts=args.contracts, max_open_strategies=args.max_open,
         kill_switch_usd=args.kill_switch, daily_loss_limit_usd=args.daily_loss,
         cycle_seconds=args.cycle_seconds, kill_file=Path(args.kill_file),
-        detectors=tuple(args.detectors),
+        detectors=tuple(args.detectors), take_profit_fraction=args.take_profit,
+        min_dte=args.min_dte, max_dte=args.max_dte, min_edge_usd=args.min_edge,
+        option_fill_timeout_s=args.fill_timeout,
     )
     config = PipelineConfig(credentials=credentials, underlyings=tuple(args.tickers),
                             data_root=data_root)
-    dividends_path = data_root / "polygon" / "dividends.parquet"
-    dividends = pd.read_parquet(dividends_path) if dividends_path.exists() else None
+    dividends = None
+    for candidate in (data_root / "dolthub" / "dividends.parquet",
+                      data_root / "polygon" / "dividends.parquet"):
+        if candidate.exists():
+            dividends = pd.read_parquet(candidate)
+            break
+    signal_source = None
+    if args.strategy != "arbitrage":
+        from .arbitrage import ExecutionCosts
+        from .execution.model_rv import RVSettings, detect_model_rv
+
+        rv = RVSettings(model=args.strategy.removeprefix("rv_"), min_dte=args.min_dte,
+                        max_dte=args.max_dte, min_edge_usd=args.min_edge)
+        rv_costs = ExecutionCosts(min_net_edge=args.min_edge)
+        signal_source = lambda chain: detect_model_rv(chain, rv_costs, rv)  # noqa: E731
     ledger = Ledger(Path(args.ledger) if args.ledger else data_root / "paper" / "ledger.sqlite")
     runner = LiveRunner(
         AlpacaBroker(TradingClient(credentials.api_key, credentials.secret_key, paper=True)),
         AlpacaMarketData(config, settings), ledger, settings,
         dividends=dividends, dry_run=not args.live, report_dir=Path(args.report_dir),
+        signal_source=signal_source,
     )
     mode = "LIVE (paper)" if args.live else "dry-run"
-    print(f"paper-run {mode}: {', '.join(args.tickers)} | detectores {', '.join(args.detectors)}"
+    source = args.strategy if args.strategy != "arbitrage" else "detectores " + ", ".join(args.detectors)
+    print(f"paper-run {mode}: {', '.join(args.tickers)} | {source}"
           f" | kill-switch {args.kill_switch:g} USD | corte manual: crear '{args.kill_file}'")
     report = runner.run(max_cycles=args.max_cycles)
     print(f"Reporte de sesión: {report}")

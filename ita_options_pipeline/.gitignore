@@ -15,3 +15,8 @@ data/
 *.sqlite
 KILL
 .Rhistory
+
+# Claves de Alpaca y salidas regenerables
+.env
+reportes_dolthub/calibracion_errores_por_contrato.csv
+reportes/paper/logs/

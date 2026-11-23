@@ -20,12 +20,17 @@ ita_options/
 ├── evaluation.py   Métricas, split in-sample/out-of-sample, Sharpe deflactado
 ├── demo.py         Mercado sintético + corrida offline del pipeline completo
 ├── doctor.py       Diagnóstico de conectividad, permisos de cuenta y datos disponibles
-├── execution/      Paper trading: órdenes mleg (orders.py) y riesgo previo (risk.py)
+├── dolthub.py      Curación de la foto diaria de DoltHub: spot implícito, dividendos point-in-time
+├── rv_backtest.py  Backtest y walk-forward de la estrategia de valor relativo
+├── execution/      Paper trading: órdenes mleg, riesgo previo, ledger, loop en vivo y
+│                   estrategia de valor relativo contra el modelo (model_rv.py)
 └── pipeline.py     Orquestador + CLI
-tests/                         98 tests, incluidos tests de contrato contra el SDK real
+scripts/                       Descarga (DoltHub, Polygon), análisis, calibración y control del informe
+reportes_dolthub/              Resultados vigentes (CSV y gráficos) citados en el informe
+tests/                         Tests, incluidos tests de contrato contra el SDK real
 validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
 justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
-informe_proyecto.md            Informe técnico (fuente de .html y .pdf)
+informe_proyecto.md            Informe consolidado (los números se validan con scripts/check_informe.py)
 generate_report_pdf.py         Renderiza informe_proyecto.html a PDF
 ESTADO.md                      Documento de traspaso: qué está hecho y qué falta
 ```
