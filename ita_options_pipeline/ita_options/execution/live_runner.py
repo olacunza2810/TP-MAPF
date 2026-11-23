@@ -202,6 +202,11 @@ class LiveRunner:
             chain, filters = build_live_chain(quotes, self._master, spots, self.pricing,
                                               self.liquidity, now, self.settings.max_quote_age_s,
                                               bars=bars)
+            if self.dividends is not None and not chain.empty:
+                # Dividendo discreto proyectado, como en el backtest (punto 2 de la devolución).
+                from ..dolthub import attach_projected_dividends
+
+                chain = attach_projected_dividends(chain, self.dividends)
             if filters is not None:
                 report.exclusions = dict(filters.exclusions)
                 report.exclusions["quote_viejo"] = int(chain["excl_quote_viejo"].sum())

@@ -121,3 +121,19 @@ def test_call_corto_en_el_dinero_se_asigna_la_vispera_de_la_fecha_ex() -> None:
     assert bt._assignment_due(position, view, NY_CLOSE["2026-06-01"])
     # Sin fecha ex al día siguiente no hay asignación.
     assert not bt._assignment_due(position, view, NY_CLOSE["2026-05-29"] + pd.Timedelta(hours=1))
+
+
+def test_cadena_en_vivo_recibe_el_dividendo_discreto() -> None:
+    """El loop en vivo usa la misma convención que el backtest, no el yield constante."""
+    from ita_options.dolthub import attach_projected_dividends
+
+    chain = pd.DataFrame({
+        "underlying": ["LMT", "BA"], "trade_date": [pd.Timestamp("2026-05-20")] * 2,
+        "expiration": [pd.Timestamp("2026-06-19")] * 2, "risk_free_rate": [0.04, 0.04],
+        "underlying_price": [500.0, 200.0], "tau": [30 / 365] * 2, "dividend_yield": [0.026, 0.0],
+    })
+    out = attach_projected_dividends(chain, DIVS)
+    # LMT: dividendo de junio declarado el 12/5 (3,60), descontado 12 días.
+    assert out.loc[0, "pv_dividends"] == pytest.approx(3.60 * np.exp(-0.04 * 12 / 365))
+    assert 500 * np.exp(-out.loc[0, "dividend_yield"] * 30 / 365) == pytest.approx(500 - out.loc[0, "pv_dividends"])
+    assert out.loc[1, "pv_dividends"] == 0.0 and out.loc[1, "dividend_yield"] == 0.0

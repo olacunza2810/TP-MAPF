@@ -501,11 +501,14 @@ def _run_paper(args: argparse.Namespace) -> None:
     config = PipelineConfig(credentials=credentials, underlyings=tuple(args.tickers),
                             data_root=data_root)
     dividends = None
-    for candidate in (data_root / "dolthub" / "dividends.parquet",
-                      data_root / "polygon" / "dividends.parquet"):
-        if candidate.exists():
-            dividends = pd.read_parquet(candidate)
-            break
+    yahoo_divs = data_root / "dolthub" / "dividends.parquet"
+    if yahoo_divs.exists():
+        from .dolthub import merge_dividends
+
+        dividends = merge_dividends(pd.read_parquet(yahoo_divs),
+                                    data_root / "dolthub" / "dividends_polygon.parquet")
+    elif (data_root / "polygon" / "dividends.parquet").exists():
+        dividends = pd.read_parquet(data_root / "polygon" / "dividends.parquet")
     signal_source = None
     if args.strategy != "arbitrage":
         from .arbitrage import ExecutionCosts

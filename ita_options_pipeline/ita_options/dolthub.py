@@ -206,6 +206,29 @@ def _pv_dividends(
     return out
 
 
+def attach_projected_dividends(chain: pd.DataFrame, dividends: pd.DataFrame) -> pd.DataFrame:
+    """Agrega ``pv_dividends`` y el yield continuo equivalente a una cadena en vivo.
+
+    Es la misma convención que usa el backtest: la paridad recibe el valor
+    presente de los dividendos discretos proyectados point-in-time, y el árbol
+    un :math:`q` tal que :math:`S e^{-q\\tau} = S - D`. Sin esto, el loop en
+    vivo volvía al yield continuo constante que la devolución objetó.
+    """
+    if chain.empty or dividends is None or dividends.empty:
+        return chain
+    out = chain.copy()
+    work = pd.DataFrame({
+        "underlying": out["underlying"],
+        "trade_date": pd.to_datetime(out["trade_date"]).dt.date,
+        "expiration": pd.to_datetime(out["expiration"]).dt.date,
+        "risk_free_rate": out["risk_free_rate"].astype(float),
+    }, index=out.index)
+    out["pv_dividends"] = _pv_dividends(work, dividends)
+    ratio = (1.0 - out["pv_dividends"] / out["underlying_price"]).clip(lower=0.5)
+    out["dividend_yield"] = (-np.log(ratio) / out["tau"].clip(lower=1e-6)).fillna(0.0)
+    return out
+
+
 def implied_spot(chain: pd.DataFrame) -> pd.DataFrame:
     r"""Spot implícito por paridad en los pares cercanos al dinero.
 
