@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS orders (
     submitted_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hedges (
+    book TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    underlying TEXT NOT NULL,
+    shares REAL NOT NULL DEFAULT 0,
+    cash REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -327,7 +335,35 @@ class Ledger:
             for leg in strategy["legs"]:
                 amount = float(leg["units"]) * int(strategy["contracts_open"] or 0)
                 expected[leg["symbol"]] = expected.get(leg["symbol"], 0.0) + amount
-        return {symbol: qty for symbol, qty in expected.items() if qty != 0}
+        # Acciones de los libros de cobertura con griegas (Parte 2, paso 4).
+        for book in self.hedge_books():
+            expected[book["underlying"]] = expected.get(book["underlying"], 0.0) + float(book["shares"])
+        return {symbol: qty for symbol, qty in expected.items() if abs(qty) > 1e-9}
+
+    # -- coberturas -----------------------------------------------------------
+
+    def hedge_books(self) -> list[dict[str, Any]]:
+        """Libros de cobertura con acciones: uno por modelo y subyacente."""
+        rows = self._conn.execute("SELECT * FROM hedges ORDER BY book").fetchall()
+        return [dict(row) for row in rows]
+
+    def hedge_book(self, model: str, underlying: str) -> dict[str, Any]:
+        book = f"{model}:{underlying}"
+        row = self._conn.execute("SELECT * FROM hedges WHERE book = ?", (book,)).fetchone()
+        if row is None:
+            return {"book": book, "model": model, "underlying": underlying, "shares": 0.0, "cash": 0.0}
+        return dict(row)
+
+    def record_hedge_fill(self, model: str, underlying: str, shares: float, price: float) -> None:
+        """Suma un fill de acciones (con signo) al libro de cobertura del modelo."""
+        book = self.hedge_book(model, underlying)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO hedges (book, model, underlying, shares, cash, updated_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (book["book"], model, underlying, float(book["shares"]) + shares,
+             float(book["cash"]) - shares * price, _utcnow()),
+        )
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()

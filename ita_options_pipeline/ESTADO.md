@@ -22,6 +22,7 @@ python scripts/run_calibration.py --out reportes_dolthub
 python scripts/run_rv_sensitivity.py --out reportes_dolthub
 python scripts/run_model_comparison.py                       # Parte 2, paso 3 (~2 min)
 python scripts/run_model_comparison.py --spot underlying_price   # robustez con el cierre
+python scripts/run_hedging.py                                # Parte 2, paso 4 (~3 min)
 ```
 
 ## Estado por etapa de la consigna
@@ -46,7 +47,7 @@ python scripts/run_model_comparison.py --spot underlying_price   # robustez con 
 | 1. Competencia CRR vs BSM en paper | `--strategy rv_compite`; vivo = backtest verificado sobre datos reales |
 | 2. Griegas de los dos modelos | `ita_options/greeks.py`, dividendo discreto escrowed; Hull 4,44 reproducido |
 | 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
-| 4. Cobertura con griegas | pendiente |
+| 4. Cobertura con griegas | `run_hedging.py` (DoltHub) y `--hedge delta` en paper: un libro de acciones por modelo |
 | 5. Monte Carlo de estrés | pendiente |
 | 6. Scorecard, informe y presentación | pendiente |
 
@@ -67,10 +68,21 @@ Paso 3, en una línea por resultado (spot implícito, 181 ruedas, 36.515 contrat
   sensibilidad y calibración recalculados; el informe se actualizó y las
   conclusiones no cambian (DSR máximo 0,21; las 36 configuraciones pierden).
 
+Paso 4 (1.749 posiciones vendidas, 3.272 días-posición, rebalanceo diario):
+
+- Efectividad $1-\mathrm{Var}(cubierta)/\mathrm{Var}(sin\ cubrir)$, bruta y neta de costos:
+  delta 95% y 95%; delta-gamma 96% y 79%; delta-vega 94% y 63%.
+- Armar y desarmar la cobertura con opciones cuesta USD 133 (gamma) y 188 (vega)
+  por posición, contra USD 3 con acciones. Se elige **delta con acciones**.
+- Binomial y BS dan la misma cobertura (diferencia media de delta 0,004;
+  Diebold-Mariano sin diferencia significativa).
+- En paper: `--hedge delta` cubre cada libro (modelo, subyacente) con acciones,
+  banda de 10 acciones; la gamma se informa en cada ciclo pero no se cubre.
+
 ## Pendiente
 
 - Correr `paper-run` en cada rueda y sumar el P&L acumulado al informe.
-- Pasos 4 a 6 de la Parte 2.
+- Pasos 5 y 6 de la Parte 2.
 
 ## Paper trading: corrida diaria
 
@@ -81,7 +93,7 @@ apertura y termina después del cierre:
 ```powershell
 python -m ita_options.pipeline paper-run --live --strategy rv_compite --cap-per-model 3 --contracts 1 --max-open 6 `
     --min-edge 10 --take-profit 0.6 --fill-timeout 180 --kill-switch 250 --daily-loss 1000 `
-    --min-dte 21 --max-dte 75 --cycle-seconds 120
+    --min-dte 21 --max-dte 75 --cycle-seconds 120 --hedge delta --hedge-band 10
 ```
 
 Corte manual: crear un archivo `KILL` en esta carpeta.

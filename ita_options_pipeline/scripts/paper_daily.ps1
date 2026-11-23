@@ -24,4 +24,5 @@ python -m ita_options.pipeline paper-run --live `
     --strategy rv_compite --cap-per-model 3 --contracts 1 --max-open 6 `
     --min-edge 10 --take-profit 0.6 --fill-timeout 180 `
     --kill-switch 250 --daily-loss 1000 `
-    --min-dte 21 --max-dte 75 --cycle-seconds 120 *>> $log
+    --min-dte 21 --max-dte 75 --cycle-seconds 120 `
+    --hedge delta --hedge-band 10 *>> $log

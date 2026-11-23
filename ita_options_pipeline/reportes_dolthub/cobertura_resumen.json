@@ -1,0 +1,148 @@
+{
+  "spot": "implied_spot",
+  "posiciones": 1749,
+  "dias_posicion": 3272,
+  "dias_de_entrada": 113,
+  "pasos_medios_por_posicion": 1.8707833047455689,
+  "dif_delta_media": 0.003542165088006292,
+  "dif_delta_por_grupo": {
+    "c_ATM": 0.0021746243117857643,
+    "c_ITM": 0.0023751047557110582,
+    "c_OTM": 0.0009934165824321602,
+    "p_ATM": 0.004326660905405227,
+    "p_ITM": 0.009595497800645503,
+    "p_OTM": 0.001383100008558379
+  },
+  "costo_por_posicion": {
+    "bsm_delta": 3.1573750827826017,
+    "bsm_delta_gamma": 132.5984179392161,
+    "bsm_delta_vega": 188.18872489257623,
+    "crr_delta": 3.1806079955181983,
+    "crr_delta_gamma": 133.2005899312913,
+    "crr_delta_vega": 187.50226995794736
+  },
+  "costo_rebalanceo_dia_intermedio": {
+    "bsm_delta": 0.10649858669010442,
+    "bsm_delta_gamma": 6.223470113989037,
+    "bsm_delta_vega": 20.672422016006372,
+    "crr_delta": 0.10759924958892035,
+    "crr_delta_gamma": 6.2709376511057116,
+    "crr_delta_vega": 20.7166915453234
+  },
+  "dias_intermedios": 784,
+  "efectividad": [
+    {
+      "modelo": "bsm",
+      "cobertura": "delta",
+      "dias_posicion": 3272,
+      "efectividad": 0.9450946521946475,
+      "efectividad_neta": 0.9453401491047683,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 64.89645365723405,
+      "pnl_medio": 4.549363448606074,
+      "costo_medio": 1.6877289180277415,
+      "pnl_neto_medio": 2.861634530578332,
+      "acciones_medias": 50.216966014225505,
+      "contratos_cobertura_medios": 0.0
+    },
+    {
+      "modelo": "bsm",
+      "cobertura": "delta_gamma",
+      "dias_posicion": 3272,
+      "efectividad": 0.9592545398047708,
+      "efectividad_neta": 0.7869308968402613,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 55.90533510640006,
+      "pnl_medio": 2.6696670325306124,
+      "costo_medio": 70.87855531041839,
+      "pnl_neto_medio": -68.20888827788778,
+      "acciones_medias": 52.776401077898925,
+      "contratos_cobertura_medios": 0.6545912942173201
+    },
+    {
+      "modelo": "bsm",
+      "cobertura": "delta_vega",
+      "dias_posicion": 3272,
+      "efectividad": 0.9373618305860003,
+      "efectividad_neta": 0.6255677892892,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 69.31594843384875,
+      "pnl_medio": 0.036384735374045164,
+      "costo_medio": 100.59354518249262,
+      "pnl_neto_medio": -100.55716044711859,
+      "acciones_medias": 58.52614300434572,
+      "contratos_cobertura_medios": 0.878927917397851
+    },
+    {
+      "modelo": "crr",
+      "cobertura": "delta",
+      "dias_posicion": 3272,
+      "efectividad": 0.9451104305503413,
+      "efectividad_neta": 0.9453530340828306,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 64.88712821858981,
+      "pnl_medio": 4.659017367297924,
+      "costo_medio": 1.7001477335456385,
+      "pnl_neto_medio": 2.9588696337522853,
+      "acciones_medias": 50.544490224482566,
+      "contratos_cobertura_medios": 0.0
+    },
+    {
+      "modelo": "crr",
+      "cobertura": "delta_gamma",
+      "dias_posicion": 3272,
+      "efectividad": 0.9595265695635126,
+      "efectividad_neta": 0.7856016966587598,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 55.718401604287514,
+      "pnl_medio": 2.5788116383801154,
+      "costo_medio": 71.20043758857838,
+      "pnl_neto_medio": -68.62162595019826,
+      "acciones_medias": 53.33737667894732,
+      "contratos_cobertura_medios": 0.659555817734329
+    },
+    {
+      "modelo": "crr",
+      "cobertura": "delta_vega",
+      "dias_posicion": 3272,
+      "efectividad": 0.9384376190431727,
+      "efectividad_neta": 0.6294389174445219,
+      "desvio_sin_cobertura": 276.95782593950213,
+      "desvio_cubierta": 68.71813201785773,
+      "pnl_medio": 0.23561457898833318,
+      "costo_medio": 100.2266106835116,
+      "pnl_neto_medio": -99.99099610452328,
+      "acciones_medias": 58.70198786490681,
+      "contratos_cobertura_medios": 0.8749632826211471
+    }
+  ],
+  "dm": [
+    {
+      "cobertura": "delta",
+      "perdida": "pnl^2 bruto",
+      "dias_posicion": 3272,
+      "T": 127,
+      "d_medio": -6.2594099636974185,
+      "dm": -0.26916255853432897,
+      "p_valor": 0.7882448514070668
+    },
+    {
+      "cobertura": "delta_gamma",
+      "perdida": "pnl^2 bruto",
+      "dias_posicion": 3272,
+      "T": 127,
+      "d_medio": 12.381078226593837,
+      "dm": 0.6224523252391857,
+      "p_valor": 0.5347693308753717
+    },
+    {
+      "cobertura": "delta_vega",
+      "perdida": "pnl^2 bruto",
+      "dias_posicion": 3272,
+      "T": 127,
+      "d_medio": 83.3477629292915,
+      "dm": 1.881708402522112,
+      "p_valor": 0.06218271605940476
+    }
+  ]
+}

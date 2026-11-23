@@ -251,8 +251,8 @@ def crr_greeks(
         # Promedio de N y N+1 pasos: el precio del árbol oscila con la paridad de
         # N cuando el bump mueve los nodos respecto del strike, y esa oscilación,
         # dividida por un bump chico, contamina vega y rho. Promediar la cancela.
-        return 0.5 * (_crr_tree(spot, strike, tau, r, sig, flag, dividends, steps, american)[0]
-                      + _crr_tree(spot, strike, tau, r, sig, flag, dividends, steps + 1, american)[0])
+        return 0.5 * (crr_price(spot, strike, tau, r, sig, flag, dividends, steps, american)
+                      + crr_price(spot, strike, tau, r, sig, flag, dividends, steps + 1, american))
 
     vega = (price(sigma + vol_bump, rate) - price(max(sigma - vol_bump, 1e-4), rate)) / (2 * vol_bump)
     rho = (price(sigma, rate + rate_bump) - price(sigma, rate - rate_bump)) / (2 * rate_bump)

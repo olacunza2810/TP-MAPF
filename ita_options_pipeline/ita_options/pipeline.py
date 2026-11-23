@@ -319,6 +319,13 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Edge neto mínimo por estructura, en USD.")
     paper.add_argument("--fill-timeout", type=float, default=60.0,
                        help="Segundos que una orden mleg de apertura espera el fill antes de cancelarse.")
+    paper.add_argument("--hedge", choices=["none", "delta"], default="none",
+                       help="Cobertura con griegas (Parte 2): none sólo registra las griegas del portafolio; "
+                            "delta cubre cada libro (modelo y subyacente) con acciones.")
+    paper.add_argument("--hedge-band", type=float, default=10.0,
+                       help="Desvío mínimo en acciones entre objetivo y posición para rebalancear la delta.")
+    paper.add_argument("--hedge-max-shares", type=float, default=1000.0,
+                       help="Tope de acciones por libro de cobertura.")
 
     # ``--tickers`` también dentro de cada subcomando. SUPPRESS evita que el
     # default del subcomando pise el valor pasado antes del subcomando.
@@ -534,14 +541,24 @@ def _run_paper(args: argparse.Namespace) -> None:
                         max_dte=args.max_dte, min_edge_usd=args.min_edge)
         rv_costs = ExecutionCosts(min_net_edge=args.min_edge)
         signal_source = lambda chain: detect_model_rv(chain, rv_costs, rv)  # noqa: E731
+    broker = AlpacaBroker(TradingClient(credentials.api_key, credentials.secret_key, paper=True))
+    hedger = None
+    if args.strategy.startswith("rv_"):
+        from .execution.hedger import DeltaHedger, HedgeSettings
+
+        hedger = DeltaHedger(broker, ledger,
+                             HedgeSettings(mode=args.hedge, band_shares=args.hedge_band,
+                                           max_shares=args.hedge_max_shares),
+                             settings, dry_run=not args.live)
     runner = LiveRunner(
-        AlpacaBroker(TradingClient(credentials.api_key, credentials.secret_key, paper=True)),
-        AlpacaMarketData(config, settings), ledger, settings,
+        broker, AlpacaMarketData(config, settings), ledger, settings,
         dividends=dividends, dry_run=not args.live, report_dir=Path(args.report_dir),
-        signal_source=signal_source,
+        signal_source=signal_source, hedger=hedger,
     )
     mode = "LIVE (paper)" if args.live else "dry-run"
     source = args.strategy if args.strategy != "arbitrage" else "detectores " + ", ".join(args.detectors)
+    if hedger is not None:
+        source += f" | cobertura {args.hedge}"
     print(f"paper-run {mode}: {', '.join(args.tickers)} | {source}"
           f" | kill-switch {args.kill_switch:g} USD | corte manual: crear '{args.kill_file}'")
     report = runner.run(max_cycles=args.max_cycles)

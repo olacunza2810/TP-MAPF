@@ -72,6 +72,8 @@ class CycleReport:
     entries_opened: int = 0
     closes: int = 0
     daily_pnl: float = 0.0
+    hedge_pnl: float = 0.0
+    hedge_trades: int = 0
     reconciliation_diffs: int = 0
     halted: str | None = None
     exclusions: dict[str, int] = field(default_factory=dict)
@@ -124,6 +126,7 @@ class LiveRunner:
         timing: Timing | None = None,
         now: Callable[[], pd.Timestamp] | None = None,
         signal_source: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+        hedger: Any | None = None,
     ) -> None:
         self.broker = broker
         self.market = market_data
@@ -149,6 +152,11 @@ class LiveRunner:
         self._signal_source = signal_source or (
             lambda chain: detect_live(chain, self.costs, self.settings.detectors)
         )
+        # Cobertura con griegas (``execution.hedger.DeltaHedger``); ``None`` la desactiva.
+        self.hedger = hedger
+        self._hedge_baseline: tuple[date, float] | None = None
+        self._last_chain: pd.DataFrame | None = None
+        self._last_spots: Mapping[str, float] = {}
 
     # -- control ------------------------------------------------------------
 
@@ -242,6 +250,8 @@ class LiveRunner:
                 self._reconcile(report)
             if self.halted_reason is None and self._entry_window(now, clock):
                 self._enter(chain, today, report)
+            if self.hedger is not None and self.halted_reason is None:
+                self._hedge(chain, spots, report)
         except Exception as exc:  # noqa: BLE001 - nunca abandonar el loop con órdenes vivas
             # Una excepción acá puede ocurrir en medio de una secuencia (por
             # ejemplo, con las acciones ya llenadas y antes de enviar las
@@ -289,6 +299,13 @@ class LiveRunner:
                 self._close(strategy, reason, quotes, report)
 
         report.daily_pnl = self.ledger.realized_pnl(today) + unrealized_total
+        if self.hedger is not None:
+            # P&L del día de los libros de cobertura: valor de mercado contra el del inicio de la rueda.
+            value = self.hedger.hedge_value(spots)
+            if self._hedge_baseline is None or self._hedge_baseline[0] != today:
+                self._hedge_baseline = (today, value)
+            report.hedge_pnl = value - self._hedge_baseline[1]
+            report.daily_pnl += report.hedge_pnl
         if report.daily_pnl < -abs(self.settings.daily_loss_limit_usd):
             self._halt("perdida_diaria")
             self._close_all("perdida_diaria", quotes, spots, report)
@@ -298,6 +315,18 @@ class LiveRunner:
     ) -> None:
         for strategy in self.ledger.open_strategies():
             self._close(strategy, reason, quotes, report)
+        if self.hedger is not None and not self.dry_run:
+            # Sin posiciones de opciones no hay nada que cubrir: se cierran los libros.
+            table = self.hedger.run([], pd.DataFrame(), spots, flatten=True)
+            report.hedge_trades += int((table.get("operado", pd.Series(dtype=float)) != 0).sum())
+
+    def _hedge(self, chain: pd.DataFrame, spots: Mapping[str, float], report: CycleReport) -> None:
+        """Griegas del portafolio por modelo y rebalanceo delta con acciones."""
+        account = self.broker.account()
+        shorting = bool(getattr(account, "shorting_enabled", False))
+        table = self.hedger.run(self.ledger.open_strategies(), chain, spots, shorting=shorting)
+        if not table.empty:
+            report.hedge_trades += int((table["operado"] != 0).sum())
 
     def _close(
         self, strategy: Mapping[str, Any], reason: str, quotes: pd.DataFrame, report: CycleReport
