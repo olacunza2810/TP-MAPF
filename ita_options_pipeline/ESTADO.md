@@ -40,7 +40,7 @@ python scripts/run_replay.py --data-root data_hist --out reportes_replay   # his
 | IS/OOS | Walk-forward de la estrategia de valor relativo (CRR y BSM), julio a noviembre |
 | Paper trading | `paper-run --strategy rv_compite` en una VM de Oracle Cloud, de lunes a viernes desde el 23/11 |
 | Monitoreo y stop-loss | Loop de rueda completa con reconciliación, kill-switch, pérdida diaria y corte manual |
-| AI log | `../AI_LOG.md` (cada integrante agrega sus interacciones) |
+| AI log | Sección 18 del informe consolidado, que se entrega aparte |
 
 ## Parte 2
 

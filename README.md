@@ -18,8 +18,8 @@ Sistema de punta a punta para valuar, detectar, operar y cubrir opciones sobre
 
 ## Qué hay en este repositorio
 
-El código, los resultados reproducibles y el registro de uso de IA. El informe
-consolidado y las presentaciones se entregan por separado.
+El código y los resultados reproducibles. El informe consolidado (que incluye el
+registro de uso de IA) y las presentaciones se entregan por separado.
 
 | Qué | Dónde |
 |---|---|
@@ -27,7 +27,6 @@ consolidado y las presentaciones se entregan por separado.
 | Resultados de la Parte 2 (CSV y gráficos) | [`ita_options_pipeline/reportes_dolthub/`](ita_options_pipeline/reportes_dolthub/), [`reportes_replay/`](ita_options_pipeline/reportes_replay/) |
 | Resultados de la Parte 1 (grilla sobre Polygon, histórico) | [`ita_options_pipeline/reportes_final/`](ita_options_pipeline/reportes_final/) |
 | Estado por etapa de la consigna | [`ita_options_pipeline/ESTADO.md`](ita_options_pipeline/ESTADO.md) |
-| Registro de uso de IA | [`AI_LOG.md`](AI_LOG.md) |
 
 ## Resultados principales
 
