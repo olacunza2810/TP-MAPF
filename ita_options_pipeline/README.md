@@ -2,9 +2,9 @@
 
 Valuación, detección, backtest, coberturas, estrés y ejecución en paper trading
 de opciones sobre **RTX**, **BA** y **LMT**, acciones individuales del ETF ITA.
-Este README describe el código; los resultados y su interpretación están en
-[`informe_proyecto.md`](informe_proyecto.md) y en
-[`resumen_presentacion/`](resumen_presentacion/).
+Este README describe el código. Los resultados quedan en `reportes_dolthub/` y
+`reportes_replay/`; su interpretación está en el informe consolidado, que se
+entrega aparte.
 
 ## Instalación
 
@@ -12,7 +12,7 @@ Requiere Python 3.11 o superior.
 
 ```bash
 pip install -e ".[dev]"             # paquete + pytest
-pip install -e ".[dev,analisis]"    # + matplotlib y lo necesario para regenerar gráficos y el PDF del informe
+pip install -e ".[dev,analisis]"    # + matplotlib, para regenerar los gráficos
 python -m pytest                    # 191 tests, sin red ni credenciales (~30 s)
 ita-options demo                    # pipeline completo sobre un mercado sintético, offline
 ```
@@ -70,7 +70,7 @@ simulado, `tests/fake_broker.py`) se testean sin credenciales.
 
 ## Reproducir los resultados
 
-Cada número del informe sale de un script. Con red (DoltHub y Yahoo):
+Cada resultado sale de un script. Con red (DoltHub y Yahoo):
 
 | Paso | Comando | Salida |
 |---|---|---|
@@ -85,8 +85,6 @@ Cada número del informe sale de un script. Con red (DoltHub y Yahoo):
 | Historia 2020–2026 (~70 min) | `python scripts/download_dolthub.py --start 2020-01-02 --end 2026-11-20 --data-root data_hist --workers 10` | `data_hist/` |
 | Curación de la historia | `python scripts/run_dolthub_analysis.py --data-root data_hist --steps curate --out reportes_replay` | `data_hist/dolthub/curated.parquet` |
 | Simulación histórica (~15 min) | `python scripts/run_replay.py --data-root data_hist --out reportes_replay` | `reportes_replay/` |
-| Control del informe | `python scripts/check_informe.py` | verifica 117 números del informe contra `reportes_dolthub/` y `reportes_replay/` |
-| Gráficos y PDF del resumen | `python resumen_presentacion/hacer_graficos.py` y, en esa carpeta, `latexmk -xelatex -jobname=Resumen_Presentacion_Grupo3 resumen.tex` | `resumen_presentacion/` |
 
 ## Paper trading
 
@@ -118,10 +116,9 @@ un archivo `KILL` en esta carpeta.
 
 | Archivo | Qué es |
 |---|---|
-| `informe_proyecto.md` / `.pdf` | Informe consolidado del semestre. El PDF se arma con pandoc y XeLaTeX (`pandoc informe_proyecto.md -o informe_proyecto.pdf --pdf-engine=xelatex -V mainfont="DejaVu Serif" -V monofont="DejaVu Sans Mono" -V mathfont="Latin Modern Math" -V colorlinks=true`); `generate_report_pdf.py` e `informe_proyecto.css` son una alternativa sin LaTeX, a partir de la versión HTML |
 | `ESTADO.md` | Estado por etapa de la consigna y pendientes |
-| `resumen_presentacion/` | Resumen de 33 páginas para armar la presentación (LaTeX) |
 | `reportes_dolthub/`, `reportes_replay/` | Resultados vigentes (CSV y gráficos) |
 | `docs/notas_tecnicas_parte1.md` | Notas técnicas de septiembre: controles de sesgo, IV, filtros, detectores y piloto |
-| `validate_sample.py`, `justificacion_generacion_datos.md`, `outputs/` | **Históricos (Parte 1):** validación de la muestra sintética de la demo |
+| `validate_sample.py`, `outputs/` | **Históricos (Parte 1):** validación de la muestra sintética de la demo |
+| `reportes_final/` | **Histórico (Parte 1):** grilla de 16 configuraciones sobre velas de Polygon (`scripts/run_daily_grid.py`) |
 | `reportes/paper_probe_*.json` | **Histórico (Parte 1):** prueba de órdenes del 14/09 |

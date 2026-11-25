@@ -16,21 +16,24 @@ Sistema de punta a punta para valuar, detectar, operar y cubrir opciones sobre
   histórica del sistema completo de 2020 a 2026 y una decisión final con
   criterios fijados de antemano.
 
-## Entregables
+## Qué hay en este repositorio
 
-| Entregable | Dónde |
+El código, los resultados reproducibles y el registro de uso de IA. El informe
+consolidado y las presentaciones se entregan por separado.
+
+| Qué | Dónde |
 |---|---|
-| Informe consolidado del semestre (PDF) | [`ita_options_pipeline/informe_proyecto.pdf`](ita_options_pipeline/informe_proyecto.pdf) (fuente: [`informe_proyecto.md`](ita_options_pipeline/informe_proyecto.md)) |
-| Resumen para la presentación de la Parte 2 | [`ita_options_pipeline/resumen_presentacion/`](ita_options_pipeline/resumen_presentacion/) |
-| Presentación e informe de la Parte 1 | [`entrega_parcial_sep/`](entrega_parcial_sep/) |
 | Código | [`ita_options_pipeline/`](ita_options_pipeline/) (ver su [README](ita_options_pipeline/README.md)) |
+| Resultados de la Parte 2 (CSV y gráficos) | [`ita_options_pipeline/reportes_dolthub/`](ita_options_pipeline/reportes_dolthub/), [`reportes_replay/`](ita_options_pipeline/reportes_replay/) |
+| Resultados de la Parte 1 (grilla sobre Polygon, histórico) | [`ita_options_pipeline/reportes_final/`](ita_options_pipeline/reportes_final/) |
+| Estado por etapa de la consigna | [`ita_options_pipeline/ESTADO.md`](ita_options_pipeline/ESTADO.md) |
 | Registro de uso de IA | [`AI_LOG.md`](AI_LOG.md) |
 
 ## Resultados principales
 
 | Pregunta | Respuesta | Evidencia |
 |---|---|---|
-| ¿Hay arbitraje con precios reales? | No. Las 1.744 violaciones de paridad de la Parte 1 bajan a 3 con bid/ask observado y spot sincronizado, y ninguna es ejecutable | `reportes_dolthub/arbitraje_*` |
+| ¿Hay arbitraje con precios reales? | No. Con los supuestos de la Parte 1 (dividendo continuo, spot del cierre), la cadena observada de 2026 muestra 1.744 violaciones de paridad; con dividendo discreto y spot sincronizado bajan a 3, y ninguna es ejecutable | `reportes_dolthub/arbitraje_*` |
 | ¿Qué modelo valúa mejor? | El binomial, con significancia alta ($DM^* = 13{,}1$ sobre 36.515 contratos) y donde la teoría lo predice (puts ITM, fechas ex); pero la diferencia supera medio spread sólo en el 0,3% de los casos | `reportes_dolthub/comparacion_*` |
 | ¿Qué cobertura conviene? | Delta con acciones: 95% de efectividad neta por USD 3 por posición; cubrir la gamma con opciones no paga sus costos | `reportes_dolthub/cobertura_*` |
 | ¿Qué pasa bajo estrés? | La cobertura delta baja el ES 99% entre 25% y 45%; el riesgo dominante es la liquidez (USD 708 para cerrar todo) | `reportes_dolthub/estres_*` |
@@ -47,7 +50,7 @@ Sistema de punta a punta para valuar, detectar, operar y cubrir opciones sobre
 | 4. Walk-forward IS/OOS | Calibración en marzo–junio y evaluación mes a mes de julio a noviembre, con Sharpe deflactado | `ita_options/rv_backtest.py` |
 | 5. Ajuste de la calibración | Sonrisa paramétrica por vencimiento; error de repricing dentro y fuera de muestra | `scripts/run_calibration.py` |
 | 6. Monitoreo como proceso | Loop de rueda completa: marca, reconcilia con el broker y aplica kill-switch, pérdida diaria y corte manual | `ita_options/execution/live_runner.py` |
-| 7. Una sola versión | Informe reescrito con los números vigentes; la entrega parcial quedó archivada aparte | `informe_proyecto.md` |
+| 7. Una sola versión | Informe consolidado reescrito con los números vigentes (se entrega aparte) | — |
 
 ## Cómo correrlo
 
@@ -57,7 +60,6 @@ Requiere Python 3.11 o superior. Desde `ita_options_pipeline/`:
 pip install -e ".[dev,analisis]"
 python -m pytest                    # 191 tests, sin red ni credenciales
 ita-options demo                    # demo offline sobre un mercado sintético
-python scripts/check_informe.py     # verifica los números del informe contra reportes_dolthub/
 ```
 
 La tabla para reproducir cada resultado y la configuración del paper trading

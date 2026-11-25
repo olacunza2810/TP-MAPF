@@ -2,3 +2,6 @@
 APIS.txt
 .env
 *.env
+
+# Informe y presentaciones: se entregan aparte, no van en el repositorio
+entregables/

@@ -10,7 +10,6 @@ Requiere Python 3.11 o superior. Desde esta carpeta:
 ```powershell
 pip install -e ".[dev]"
 python -m pytest                          # 191 tests, sin red ni credenciales
-python scripts/check_informe.py           # números del informe contra reportes_dolthub/
 ```
 
 Con red (DoltHub y Yahoo):
@@ -52,7 +51,7 @@ python scripts/run_replay.py --data-root data_hist --out reportes_replay   # his
 | 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
 | 4. Cobertura con griegas | `run_hedging.py` (DoltHub) y `--hedge delta_gamma` en paper: un libro por modelo y subyacente |
 | 5. Monte Carlo de estrés | `run_stress.py`: cartera en producción, 6 escenarios MC (5.000 trayectorias) y 5 determinísticos |
-| 6. Scorecard, informe y presentación | `scorecard.py` (criterios fijados antes del paper), informe consolidado (25 págs., 117 números verificados), AI log, resumen para la presentación (`resumen_presentacion/`, 33 págs.) |
+| 6. Scorecard | `scorecard.py`: criterios fijados antes del paper. El informe consolidado y la presentación se entregan aparte |
 | Simulación histórica 2020–2026 | `run_replay.py`: el sistema completo foto por foto sobre 1.229 ruedas de DoltHub |
 | Producción | VM gratuita de Oracle Cloud con `cron` (`deploy/oracle/`); órdenes maker publicadas hasta 30 min (`--rest-seconds 1800`) |
 
@@ -131,8 +130,7 @@ Paper en producción (Oracle, desde el 23/11):
 
 - Con 10 o más estructuras cerradas por modelo en paper: completar el criterio
   M4 en vivo (`scorecard.py --ledger reportes/paper_vm/ledger.sqlite`, después
-  de traer el ledger de la VM con `deploy/oracle/traer_resultados.ps1`), la sección de
-  resultados finales del informe y la sección 10 del resumen.
+  de traer el ledger de la VM con `deploy/oracle/traer_resultados.ps1`).
 
 ## Paper trading: corrida diaria
 

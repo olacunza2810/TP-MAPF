@@ -1,6 +1,6 @@
 # Notas técnicas de la Parte 1 (septiembre de 2026)
 
-> **Documento histórico.** Estas notas acompañaron la entrega parcial y describen el pipeline sobre Alpaca y Polygon (velas diarias con bid/ask sintético), los controles de sesgo, la inversión de IV, los filtros de liquidez, los detectores y el piloto de paper de septiembre. Los resultados vigentes usan bid/ask observado de DoltHub y están en `../informe_proyecto.md`. Lo que sigue se conserva porque los controles y los detectores descritos siguen en uso.
+> **Documento histórico.** Estas notas acompañaron la entrega parcial y describen el pipeline sobre Alpaca y Polygon (velas diarias con bid/ask sintético), los controles de sesgo, la inversión de IV, los filtros de liquidez, los detectores y el piloto de paper de septiembre. Los resultados vigentes usan bid/ask observado de DoltHub (`../reportes_dolthub/`). Lo que sigue se conserva porque los controles y los detectores descritos siguen en uso.
 
 ## Limitación estructural de Alpaca (leer antes de diseñar el backtest)
 
@@ -358,9 +358,8 @@ vol total igual a la IV at-the-money: la vol realizada coincide con la implícit
 por construcción. La cadena se valúa con el árbol CRR sobre el smile de cada
 activo, así que no contiene arbitrajes salvo los inyectados a propósito.
 
-La metodología completa y los parámetros están en
-`justificacion_generacion_datos.md`; `python validate_sample.py` reproduce la
-tabla de momentos y la figura `outputs/validacion_distribucion.png`.
+Los parámetros están en `ita_options/calibration.py`; `python validate_sample.py`
+reproduce la tabla de momentos y la figura `outputs/validacion_distribucion.png`.
 
 `test_sdk_contract.py` construye los objetos que devuelve Alpaca y verifica que
 los adaptadores lean los campos correctos. Es la clase de test que detecta un

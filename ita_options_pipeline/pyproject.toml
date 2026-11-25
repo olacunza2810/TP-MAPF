@@ -18,8 +18,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]
-# Gráficos de los scripts de análisis y PDF del informe (generate_report_pdf.py).
-analisis = ["matplotlib>=3.8", "beautifulsoup4>=4.12", "reportlab>=4.0"]
+# Gráficos de los scripts de análisis.
+analisis = ["matplotlib>=3.8"]
 
 [project.scripts]
 ita-options = "ita_options.pipeline:main"
