@@ -393,3 +393,154 @@ production criterion (paper P&L) is still pending.
 - move the strategy to the escrowed tree;
 - leave the paper run for the end, with everything ready;
 - run delta-gamma in paper even though the evidence favours delta.
+
+## Session 5 — 23 to 25 November 2026: historical simulation, production and submission
+
+Same conversation (Octavio, Claude).
+
+### 5.1 Paper trading or history? Both
+
+**Prompts:**
+
+> Que es lo que dice la consigna acerca de lo que habria que hacer en paper
+> trading?
+
+> En vez de hacerlo correr en vivo (Toma mucho tiempo y requiere que tenga mi
+> compu prendida y activa), xq no lo hacemos correr con datos pasados para ver
+> que nos encuentra ahi?
+
+> Hagamos las dos. Pero quiero que la simulacion historica sea de mucho mucho
+> tiempo atras, como si te dijiese 2019 hasta hoy si es posible (si no es
+> posible desde 2019, entonces lo maximo que se pueda)
+
+**Response (summary):**
+
+- It explained that the brief requires live paper trading (the Black-Scholes
+  model competing in production against the binomial), so a historical run
+  complements it but does not replace it.
+- It probed DoltHub and found that the option chain starts in January 2020
+  (2019 is empty), with Monday/Wednesday/Friday snapshots until 2025 and RTX
+  options only from April 2020. It downloaded 1.229 trading days (503.711
+  quotes) on our computer.
+- It wrote `ita_options/replay.py` and `scripts/run_replay.py`: the production
+  system replayed snapshot by snapshot with the same signal functions, the
+  competition caps, the Part 1 fill rule, the live risk rules and the three
+  hedging modes, plus 5 tests.
+- Result: 185 closed structures, about USD −100 each, every year and for both
+  models; the model promised USD +11 and exiting at mid already loses USD 46 to
+  68 (adverse selection). M4 on the simulation: $z = -0{,}21$.
+
+**Why we delegated:** writing and testing the simulation engine and running
+it. The idea of a historical run and the "as far back as possible" scope were
+ours; the reading of the results is in the report.
+
+### 5.2 Production on a free cloud machine
+
+**Prompts:**
+
+> Si me aseguras q es gratis, lo hacemos.
+
+> Explicame bien como configurar el VM
+
+> Que claves serian?
+
+**Response (summary):**
+
+- It checked Oracle's current Always Free terms (card for verification only,
+  no charge without upgrading, 2 OCPU / 12 GB for Arm machines, idle machines
+  can be stopped) and said it could not promise more than
+  that.
+- It wrote `deploy/oracle/setup_vm.sh` (packages, New York time zone, swap,
+  repository, tests and `cron`), `paper_daily.sh` (daily run with the
+  production settings) and `traer_resultados.ps1` (copies the reports and the
+  ledger back), and guided the machine setup screen by screen.
+- The first setup stopped silently at the `cron` step (an empty crontab plus
+  `pipefail`); it fixed the script.
+- Octavio created the account, the machine and the `.env` with the Alpaca
+  paper keys himself; the AI never saw the keys.
+
+**Why we delegated:** the deployment scripts and the step-by-step guide. The
+account, the card and the keys stayed with us.
+
+### 5.3 Summary for the presentation
+
+**Prompt (opening):**
+
+> Bueno, vamos con la presentacion ahora. Necesito que me hagas un resumen en
+> PDF bien completo en el que expliques que es lo que hace el codigo, de que es
+> capaz, como calcula cada cosa, en que se diferencia de lo que teniamos en la
+> parte 1, donde esta corriendo, los resultados del backtest de 2020 hasta
+> 2026 [...] Quiero que me digas que es lo que entendes de lo que te estoy
+> pidiendo antes de q arranques. [...]
+
+> este no, todo lo demas si. 1. Bien largo y con mucho grafico. 2. PDF y
+> hacelo en latex para q se vea bien el pdf.
+
+**Response (summary):** it listed what it understood and proposed extra
+sections; we kept all but the slide-by-slide guide. It produced a 33-page
+LaTeX document with 15 charts generated from the repository's result files
+(`resumen_presentacion/`): what the system does, how each quantity is
+computed, Part 1 against Part 2, the corrections in plain language, the Part 2
+results, the 2020–2026 simulation, where it runs, limitations, likely
+questions with answers, a glossary and sources.
+
+**Why we delegated:** writing up and charting results that come from scripts,
+so that the whole group can build the slides from one source.
+
+### 5.4 First paper sessions: zero fills, and the fix
+
+**Prompts:**
+
+> Quiero ver como viene el Codigo a ver si hizo alguna operacion.
+
+> Si, vamos con la 2. Primero corro ese comando q me pusiste arriba?
+
+**Response (summary):**
+
+- From the session reports Octavio pasted: on 23 and 24 November the system
+  sent 155 orders and none filled. The maker order waited 180 seconds and was
+  cancelled, and the wait blocked the cycle.
+- It also found that the daily `git pull` on the machine failed because the
+  scripts' execute bit counted as a local change; fixed in the repository.
+- Option 2, chosen by us: the opening order now rests up to 30 minutes
+  (`--rest-seconds 1800`) without blocking the cycle, occupies a slot like an
+  open position, and is cancelled on expiry, on any halt and at the close.
+  Seven new tests; it reaches the machine with the next daily pull.
+
+**Why we delegated:** reading the logs and implementing the change with tests.
+We chose among the three options it laid out.
+
+### 5.5 Submission review
+
+**Prompts:**
+
+> Necesito que leas la consigna del TP y te fijes que es lo que hay que
+> entregar, ademas del codigo y la presentacion.
+
+> Quiero que primero revises que este todo OK con lo que ya esta hecho, en
+> este caso el repo de Github. Quiero que lo analices y te fijes si eso ya
+> estaria listo para entregar.
+
+> Dale. / Dale, hacelo.
+
+**Response (summary):**
+
+- It listed the five deliverables of the brief and their status.
+- It audited the repository from a clean clone: the 191 tests pass, the demo
+  and every script run, and there are no keys in the 35 commits. It found
+  outdated READMEs and `ESTADO.md`, undeclared plotting dependencies, a
+  duplicated PDF, unused imports and missing docstrings, and fixed them.
+- It added sections 12 (2020–2026 simulation) and 13 (paper in production) to
+  the consolidated report, extended `check_informe.py` to 117 numbers checked
+  against `reportes_dolthub/` and `reportes_replay/`, rebuilt the PDF and wrote
+  this entry.
+
+**Why we delegated:** an independent check of the repository against the
+brief, and documentation of results that come from scripts.
+
+**Decisions made by us in this session:**
+
+- run both the historical simulation and the live paper trading;
+- take the history as far back as the data allow;
+- deploy on a free cloud machine instead of leaving our computer on;
+- let maker orders rest 30 minutes instead of keeping the 3-minute wait.

@@ -166,19 +166,70 @@ def expected_part2() -> dict[str, str]:
     return out
 
 
+def expected_replay() -> dict[str, str]:
+    """Números de la simulación histórica 2020-2026 (sección 12), desde ``reportes_replay/``."""
+    rp = ROOT / "reportes_replay"
+    datos = json.loads((rp / "resumen_datos.json").read_text(encoding="utf-8"))
+    res = pd.read_csv(rp / "replay_resumen.csv")
+    m4 = pd.read_csv(rp / "replay_m4.csv").set_index("modo")
+    trades = pd.read_csv(rp / "replay_estructuras_delta.csv")
+    closed = trades.dropna(subset=["cerrada"])
+    years = pd.read_csv(rp / "replay_por_anio.csv")
+    years = years[years.modo == "delta"].pivot(index="anio", columns="modelo", values="pnl")
+    d = res[res.modo == "delta"].set_index("modelo")
+    s = res[res.modo == "sin_cobertura"].set_index("modelo")
+    means = closed.groupby("modelo")[["edge", "pnl_al_mid", "pnl"]].mean()
+    reasons = closed.groupby("motivo").pnl.agg(["count", "mean"])
+    ba = closed[closed.subyacente == "BA"]
+    events = pd.read_csv(rp / "replay_eventos_delta.csv")
+    out = {
+        "replay ruedas": f"{miles(datos['ruedas'])} ruedas",
+        "replay cotizaciones": f"{miles(datos['filas'])}\ncotizaciones",
+        "replay explotables": f"el {pct(datos['supervivencia'])} pasa los filtros",
+        "replay spread": f"mediano {dec(100 * datos['spread_rel_mediano'], 1)}%",
+        "replay órdenes": f"| Órdenes publicadas | {miles(d.loc['crr', 'ordenes'])} | {miles(d.loc['bsm', 'ordenes'])} |",
+        "replay cerradas": f"| Llenadas y cerradas | {d.loc['crr', 'cerradas']} | {d.loc['bsm', 'cerradas']} |",
+        "replay acierto": f"| Con ganancia | {pct(d.loc['crr', 'acierto'])} | {pct(d.loc['bsm', 'acierto'])} |",
+        "replay pnl": f"| P&L realizado | USD {miles(d.loc['crr', 'pnl_total'])} | USD {miles(d.loc['bsm', 'pnl_total'])} |",
+        "replay media": (f"| P&L medio por estructura (EE) | USD {miles(d.loc['crr', 'pnl_medio'])} "
+                         f"({round(d.loc['crr', 'error_estandar'])}) | USD {miles(d.loc['bsm', 'pnl_medio'])} "
+                         f"({round(d.loc['bsm', 'error_estandar'])}) |"),
+        "replay valor final": f"| Valor final al mid, con la cobertura | USD {miles(d.loc['crr', 'valor_final_mid'])} | USD {miles(d.loc['bsm', 'valor_final_mid'])} |",
+        "replay costo cobertura": f"| Costo de la cobertura en siete años | USD {round(d.loc['crr', 'costo_cobertura'])} | USD {round(d.loc['bsm', 'costo_cobertura'])} |",
+        "replay sin cobertura": f"USD {miles(s.loc['crr', 'valor_final_mid'])} para el binomial y USD {miles(s.loc['bsm', 'valor_final_mid'])} para Black-Scholes",
+        "replay edge": f"| Edge prometido al publicar | USD {dec(means.loc['crr', 'edge'], 1)} | USD {dec(means.loc['bsm', 'edge'], 1)} |",
+        "replay al mid": f"| Resultado si se saliera al mid | USD {dec(means.loc['crr', 'pnl_al_mid'], 1)} | USD {dec(means.loc['bsm', 'pnl_al_mid'], 1)} |",
+        "replay real": f"| Resultado real, pagando el spread de salida | USD {dec(means.loc['crr', 'pnl'], 1)} | USD {dec(means.loc['bsm', 'pnl'], 1)} |",
+        "replay llenado": f"({len(closed)} de {miles(len(trades))})",
+        "replay BA": f"{len(ba)} de las {len(closed)} estructuras\n(USD {miles(ba.pnl.sum())})",
+        "replay take-profit": f"{reasons.loc['convergencia', 'count']} estructuras cierran por take-profit con USD {round(reasons.loc['convergencia', 'mean'])}",
+        "replay pre-vencimiento": f"{reasons.loc['pre_vencimiento', 'count']} llegan a 2 días del vencimiento sin converger y pierden USD {-round(reasons.loc['pre_vencimiento', 'mean'])}",
+        "replay kill": f"{reasons.loc['kill_switch', 'count']} tocan el kill-switch y pierden USD {-round(reasons.loc['kill_switch', 'mean'])}",
+        "replay cortes": f"se activó {(events.evento == 'perdida_diaria').sum()} veces",
+        "replay M4": f"= {tex(m4.loc['delta', 'diferencia'])}$ con".replace("−", "-"),
+        "replay M4 EE": f"= {tex(m4.loc['delta', 'error_estandar'])}$",
+        "replay M4 z": f"$z = {tex(m4.loc['delta', 'z'], 2)}$".replace("−", "-"),
+        "replay M4 sin cobertura": f"Sin cobertura tampoco ($z = {tex(m4.loc['sin_cobertura', 'z'], 2)}$)".replace("−", "-"),
+        "replay años crr": "USD " + ", ".join(miles(-years.loc[y, 'crr']) + f" ({y})" for y in range(2021, 2025)) + f", {miles(-years.loc[2025, 'crr'])} (2025) y {miles(-years.loc[2026, 'crr'])}\n(2026)",
+        "replay años bsm": (f"USD {miles(-years.loc[2020, 'bsm'])} (2020), " + ", ".join(miles(-years.loc[y, 'bsm']) for y in range(2021, 2025))
+                            + f", {miles(-years.loc[2025, 'bsm'])} y\n{miles(-years.loc[2026, 'bsm'])}"),
+    }
+    return {k: v.replace("\\n", " ").replace("\n", " ") for k, v in out.items()}
+
+
 def main() -> int:
     text = (ROOT / "informe_proyecto.md").read_text(encoding="utf-8")
-    numbers = {**expected(), **expected_part2()}
+    numbers = {**expected(), **expected_part2(), **expected_replay()}
     # Las líneas del informe se cortan en cualquier espacio: se compara sin saltos de línea.
     flat = " ".join(text.split())
     missing = {k: v for k, v in numbers.items() if " ".join(v.split()) not in flat}
     total = len(numbers)
     if missing:
-        print(f"{len(missing)} de {total} números del informe no coinciden con reportes_dolthub/:")
+        print(f"{len(missing)} de {total} números del informe no coinciden con los reportes:")
         for key, value in missing.items():
             print(f"  {key}: se esperaba «{value}»")
         return 1
-    print(f"OK: los {total} números clave del informe coinciden con reportes_dolthub/.")
+    print(f"OK: los {total} números clave del informe coinciden con reportes_dolthub/ y reportes_replay/.")
     return 0
 
 

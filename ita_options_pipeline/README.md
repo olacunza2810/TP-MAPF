@@ -85,7 +85,7 @@ Cada número del informe sale de un script. Con red (DoltHub y Yahoo):
 | Historia 2020–2026 (~70 min) | `python scripts/download_dolthub.py --start 2020-01-02 --end 2026-11-20 --data-root data_hist --workers 10` | `data_hist/` |
 | Curación de la historia | `python scripts/run_dolthub_analysis.py --data-root data_hist --steps curate --out reportes_replay` | `data_hist/dolthub/curated.parquet` |
 | Simulación histórica (~15 min) | `python scripts/run_replay.py --data-root data_hist --out reportes_replay` | `reportes_replay/` |
-| Control del informe | `python scripts/check_informe.py` | verifica 90 números contra `reportes_dolthub/` |
+| Control del informe | `python scripts/check_informe.py` | verifica 117 números del informe contra `reportes_dolthub/` y `reportes_replay/` |
 | Gráficos y PDF del resumen | `python resumen_presentacion/hacer_graficos.py` y, en esa carpeta, `latexmk -xelatex -jobname=Resumen_Presentacion_Grupo3 resumen.tex` | `resumen_presentacion/` |
 
 ## Paper trading
@@ -118,7 +118,7 @@ un archivo `KILL` en esta carpeta.
 
 | Archivo | Qué es |
 |---|---|
-| `informe_proyecto.md` / `.pdf` | Informe consolidado del semestre. El PDF se arma con pandoc y XeLaTeX (`pandoc informe_proyecto.md -o informe_proyecto.pdf --pdf-engine=xelatex`); `generate_report_pdf.py` e `informe_proyecto.css` son una alternativa sin LaTeX, a partir de la versión HTML |
+| `informe_proyecto.md` / `.pdf` | Informe consolidado del semestre. El PDF se arma con pandoc y XeLaTeX (`pandoc informe_proyecto.md -o informe_proyecto.pdf --pdf-engine=xelatex -V mainfont="DejaVu Serif" -V monofont="DejaVu Sans Mono" -V mathfont="Latin Modern Math" -V colorlinks=true`); `generate_report_pdf.py` e `informe_proyecto.css` son una alternativa sin LaTeX, a partir de la versión HTML |
 | `ESTADO.md` | Estado por etapa de la consigna y pendientes |
 | `resumen_presentacion/` | Resumen de 33 páginas para armar la presentación (LaTeX) |
 | `reportes_dolthub/`, `reportes_replay/` | Resultados vigentes (CSV y gráficos) |

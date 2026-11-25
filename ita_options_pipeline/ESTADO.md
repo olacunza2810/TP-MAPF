@@ -52,7 +52,7 @@ python scripts/run_replay.py --data-root data_hist --out reportes_replay   # his
 | 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
 | 4. Cobertura con griegas | `run_hedging.py` (DoltHub) y `--hedge delta_gamma` en paper: un libro por modelo y subyacente |
 | 5. Monte Carlo de estrés | `run_stress.py`: cartera en producción, 6 escenarios MC (5.000 trayectorias) y 5 determinísticos |
-| 6. Scorecard, informe y presentación | `scorecard.py` (criterios fijados antes del paper), informe consolidado (22 págs., 90 números verificados), AI log, resumen para la presentación (`resumen_presentacion/`, 33 págs.) |
+| 6. Scorecard, informe y presentación | `scorecard.py` (criterios fijados antes del paper), informe consolidado (25 págs., 117 números verificados), AI log, resumen para la presentación (`resumen_presentacion/`, 33 págs.) |
 | Simulación histórica 2020–2026 | `run_replay.py`: el sistema completo foto por foto sobre 1.229 ruedas de DoltHub |
 | Producción | VM gratuita de Oracle Cloud con `cron` (`deploy/oracle/`); órdenes maker publicadas hasta 30 min (`--rest-seconds 1800`) |
 
@@ -133,8 +133,6 @@ Paper en producción (Oracle, desde el 23/11):
   M4 en vivo (`scorecard.py --ledger reportes/paper_vm/ledger.sqlite`, después
   de traer el ledger de la VM con `deploy/oracle/traer_resultados.ps1`), la sección de
   resultados finales del informe y la sección 10 del resumen.
-- Sumar al informe consolidado la simulación histórica y la puesta en producción.
-- Completar el AI log con la sesión del 23 al 25/11.
 
 ## Paper trading: corrida diaria
 

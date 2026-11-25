@@ -2,7 +2,7 @@
 title: "Arbitraje, valor relativo y coberturas en opciones sobre RTX, BA y LMT"
 subtitle: "Informe consolidado del semestre: Parte 1 (binomial, corregida) y Parte 2 (Black-Scholes, griegas y Monte Carlo)"
 author: "Grupo 3: A. Herrera, O. Lacunza, C. Grunewald, D. González y T. Brisighelli"
-date: "23 de noviembre de 2026"
+date: "25 de noviembre de 2026"
 geometry: margin=2.2cm
 fontsize: 11pt
 lang: es
@@ -44,7 +44,7 @@ La estrategia de valor relativo, de payoff acotado y tamaño mínimo, es la que
 corre en paper trading, porque es la única que genera posiciones sobre las que
 la Parte 2 puede comparar el binomial contra Black-Scholes en producción.
 
-La Parte 2 (secciones 7 a 13) agrega cuatro resultados.
+La Parte 2 (secciones 7 a 14) agrega cinco resultados.
 
 5. **El binomial reprecia mejor que Black-Scholes, pero por poco.** Con el
    mismo dividendo discreto en los dos modelos, sobre 36.515 contratos, el
@@ -64,6 +64,12 @@ La Parte 2 (secciones 7 a 13) agrega cuatro resultados.
 8. **Decisión, con criterios fijados antes del paper:** binomial y cobertura
    delta, con la salvedad de que la ventaja del binomial es estadística más
    que económica (sección 11).
+9. **Siete años del sistema completo confirman la selección adversa.** La
+   simulación foto por foto del sistema de producción sobre 1.229 ruedas
+   (enero de 2020 a noviembre de 2026) cierra 185 estructuras y pierde unos
+   USD 100 por estructura todos los años, con los dos modelos y sin diferencia
+   significativa entre ellos ($z = -0{,}21$). El modelo promete USD 11 por
+   estructura; saliendo al mid ya se pierden entre USD 46 y USD 68 (sección 12).
 
 # 1. Qué cambió respecto de la entrega parcial
 
@@ -446,8 +452,9 @@ En cada ciclo, cada 120 segundos durante la rueda:
    si difieren dos ciclos seguidos, detiene las entradas.
 5. **Entradas.** Cada modelo ajusta su sonrisa y propone hasta 2
    estructuras; con cupo de 3 abiertas por modelo, envía una orden `mleg`
-   límite al precio del modelo menos el margen, que espera hasta 180 segundos
-   antes de cancelarse.
+   límite al precio del modelo menos el margen. Desde el 26 de noviembre la
+   orden queda publicada hasta 30 minutos sin frenar el ciclo y se revisa en
+   cada vuelta; antes esperaba 180 segundos bloqueando el loop (sección 13).
 6. **Cobertura.** Calcula las griegas de cada libro y rebalancea con acciones
    y con la call ATM corta (sección 9.3).
 
@@ -467,7 +474,7 @@ En cada ciclo, cada 120 segundos durante la rueda:
 
 El 22 de noviembre el diagnóstico (`doctor`) verificó autenticación, permisos
 de opciones nivel 3, universo de 3.678 contratos y NBBO en vivo. El loop corre
-con la versión completa de la Parte 2 (sección 12). El reporte de cada sesión queda en
+con la versión completa de la Parte 2 (sección 13). El reporte de cada sesión queda en
 `reportes/paper/session_<fecha>/`, con las órdenes, los fills, las
 reconciliaciones y los eventos del kill-switch. **El P&L acumulado en paper se
 agrega a este informe a medida que haya ruedas operadas.**
@@ -482,8 +489,9 @@ las que comparar el binomial contra Black-Scholes en la Parte 2.
 Las estrategias de la Parte 1 siguen en producción. Sobre ellas, la Parte 2
 pone a competir a Black-Scholes contra el binomial, diseña coberturas con
 griegas, somete la cartera a escenarios de estrés y cierra con una decisión
-basada en criterios fijados de antemano. Las secciones 7 a 12 siguen ese
-orden; la 13 cuenta el proceso.
+basada en criterios fijados de antemano. Las secciones 7 a 11 siguen ese
+orden; la 12 corre el sistema completo sobre siete años de historia, la 13
+cuenta el paper en producción y la 14, el proceso.
 
 # 7. Black-Scholes: implementación y validación
 
@@ -796,7 +804,7 @@ el más simple.
 | M1. Repricing (Diebold-Mariano) | $\bar d = 0{,}037$, $DM^* = 13{,}1$ | binomial |
 | M2. Relevancia económica | la EEP supera medio spread en el 0,3% de los contratos | empate |
 | M3. Cobertura delta (Diebold-Mariano) | $p = 0{,}79$ | empate |
-| M4. P&L en paper por estructura | pendiente (al menos 10 cerradas por modelo) | — |
+| M4. P&L en paper por estructura | paper: pendiente (al menos 10 cerradas por modelo). Simulación 2020–2026: diferencia −4,6 con EE 22,5 | empate en la simulación |
 
 **Cobertura.** Gana la que gana más criterios; con empate, la más barata.
 
@@ -814,24 +822,152 @@ del spread y no cambia la calidad de la cobertura. Donde sí importa es en las
 puts dentro del dinero y alrededor de las fechas ex, que es donde
 Black-Scholes, en la competencia, tiende a vender barato. El criterio M4
 puede dar vuelta el resultado si el paper acumula operaciones suficientes;
-la regla para eso ya está escrita.
+la regla para eso ya está escrita. La simulación histórica de la sección 12
+aplica la misma regla a siete años y da empate.
 
 Sobre la estrategia en sí, la conclusión de la Parte 1 se mantiene: el valor
 relativo contra un modelo calibrado no tiene edge después de la selección
 adversa, y en esta cartera el costo de liquidez pesa más que el riesgo de
 mercado.
 
-# 12. Paper trading: Parte 2
+# 12. Simulación histórica del sistema completo (2020–2026)
 
-La corrida diaria (`scripts/paper_daily.ps1`) usa `--strategy rv_compite
---hedge delta_gamma` con los mismos límites de la sección 6.1. El reporte de
-cada sesión queda en `reportes/paper/session_<fecha>/`: estrategias por
-modelo, órdenes de entrada y de cobertura, griegas de cada libro por ciclo y
-P&L de la cobertura. `scripts/scorecard.py --ledger data/paper/ledger.sqlite`
-evalúa el criterio M4 con lo acumulado. **El P&L acumulado de las dos partes
-se agrega a este informe y a la presentación con las ruedas operadas.**
+## 12.1 Diseño
 
-# 13. El proceso
+El paper trading tarda semanas en juntar operaciones. Para tener evidencia con
+más peso, corrimos **el sistema de producción completo sobre toda la historia
+disponible**, foto por foto, como si hubiera operado desde enero de 2020
+(`ita_options/replay.py`, `scripts/run_replay.py`).
+
+**Datos.** DoltHub tiene la cadena con bid y ask desde enero de 2020; 2019
+está vacío. Son 1.229 ruedas hasta el 20 de noviembre de 2026 y 503.711
+cotizaciones, de las que el 65% pasa los filtros de liquidez (spread relativo
+mediano 13,8%). Entre 2020 y 2025 la foto es de lunes, miércoles y viernes;
+desde 2026, diaria. Las opciones de RTX aparecen en abril de 2020: antes la
+empresa era UTX. Enero a marzo de 2020 tiene sólo BA y LMT, pero cubre el COVID.
+
+**Qué reproduce.** Las mismas funciones que el loop en vivo:
+
+- Señales de `detect_model_rv` por foto y por modelo, con dividendo discreto
+  escrowed y spot implícito, vencimientos de 21 a 75 días y edge mínimo de
+  USD 10.
+- Competencia: hasta 3 estructuras por modelo y 6 en total, prioridad
+  alternada entre modelos y sin repetir las mismas patas.
+- Llenado de la Parte 1: la orden publicada en una foto se llena en la
+  siguiente sólo si esa foto la cruza, al precio límite; si no, se cancela.
+- Riesgo: kill-switch de USD 250 al mid, take-profit al 60% del edge a
+  liquidación, cierre a 2 días del vencimiento y corte de la cuenta si pierde
+  más de USD 1.000 entre fotos.
+- Coberturas: sin cobertura, delta y delta-gamma entera, con las griegas de
+  cada libro calculadas como en vivo. Comisión de USD 0,65 por contrato y 1 punto
+  básico en acciones; el efectivo rinde la tasa y las acciones cobran sus
+  dividendos.
+
+## 12.2 Resultados
+
+Con la cobertura delta, que es la recomendada:
+
+| | Binomial | Black-Scholes |
+|---|---|---|
+| Órdenes publicadas | 1.498 | 1.494 |
+| Llenadas y cerradas | 86 | 99 |
+| Con ganancia | 35% | 44% |
+| P&L realizado | USD −8.704 | USD −9.560 |
+| P&L medio por estructura (EE) | USD −101 (14) | USD −97 (17) |
+| Valor final al mid, con la cobertura | USD −8.005 | USD −9.599 |
+| Costo de la cobertura en siete años | USD 23 | USD 32 |
+
+![P&L acumulado al mid de cada modelo y de la cuenta, en los tres modos de cobertura](reportes_replay/replay_equity.png)
+
+**La pérdida es pareja en el tiempo.** Por año de cierre, el binomial pierde
+USD 776 (2021), 1.776 (2022), 1.175 (2023), 479 (2024), 2.885 (2025) y 1.612
+(2026); Black-Scholes, USD 236 (2020), 231, 1.813, 716, 1.064, 2.956 y
+2.544. No hay un año positivo. BA concentra 142 de las 185 estructuras
+(USD −12.251), porque es el subyacente con más contratos dentro de los filtros.
+
+**Por qué pierde.** Promediando por estructura cerrada:
+
+| | Binomial | Black-Scholes |
+|---|---|---|
+| Edge prometido al publicar | USD 10,5 | USD 11,4 |
+| Resultado si se saliera al mid | USD −68,2 | USD −46,1 |
+| Resultado real, pagando el spread de salida | USD −101,2 | USD −96,6 |
+
+Sólo se llena el 6% de las órdenes (185 de 2.992), y se llenan cuando el
+mercado atraviesa el límite, es decir, cuando llegó información que el modelo
+calibrado en la foto anterior todavía no tiene. Es la selección adversa de la
+sección 5.4, ahora sobre siete años: aun sin pagar el spread de salida, la
+estructura vale menos que lo que se pagó. El spread de salida suma otros USD 33
+a USD 50.
+
+**Cómo terminan.** 73 estructuras cierran por take-profit con USD 47 de
+promedio; 78 llegan a 2 días del vencimiento sin converger y pierden USD 159;
+21 tocan el kill-switch y pierden USD 377 (el corte se mide al mid y el cierre
+paga el spread); el corte de la cuenta por pérdida diaria se activó 2 veces.
+
+**Coberturas.** La delta-gamma entera da exactamente lo mismo que la delta: con
+estructuras de una unidad, la gamma de cada libro pide menos de medio contrato
+de la call ATM y redondea a cero. Sin cobertura, el valor final al mid es
+USD −10.861 para el binomial y USD −8.919 para Black-Scholes. La cobertura
+cuesta poco y cambia poco: la estrategia pierde por precio, no por movimientos
+de la acción.
+
+**Criterio M4.** La diferencia de P&L medio por estructura es
+$\bar\pi_{CRR} - \bar\pi_{BS} = -4{,}6$ con
+$EE = \sqrt{s^2_{CRR}/n_{CRR} + s^2_{BS}/n_{BS}} = 22{,}5$, es decir
+$z = -0{,}21$: se cumple el mínimo de 10 estructuras por modelo pero no la
+diferencia de dos errores estándar. Sin cobertura tampoco ($z = -1{,}07$).
+
+## 12.3 Límites de la simulación
+
+- Con fotos de lunes, miércoles y viernes, una orden se resuelve dos o tres días
+  después. El llenado es más conservador que en vivo, donde puede cruzarse en
+  cualquier momento de la rueda, pero el sentido de la selección adversa no
+  cambia: una orden que espera más se llena en peores momentos.
+- Un precio por día: los cortes por pérdida se evalúan entre fotos, no dentro
+  de la rueda.
+- No hay costo de préstamo ni de margen, y los dividendos de BA se cortaron en
+  marzo de 2020: el modelo lo toma con las fechas de anuncio.
+
+# 13. Paper trading: Parte 2
+
+**Dónde corre.** Desde el 23 de noviembre el sistema opera solo en una máquina
+virtual gratuita de Oracle Cloud (plan *Always Free*), contra la cuenta paper de
+Alpaca. `cron` lanza `deploy/oracle/paper_daily.sh` de lunes a viernes a las
+9:20 de Nueva York; el script baja la última versión del código, evita corridas
+superpuestas y arranca `paper-run --live --strategy rv_compite --hedge
+delta_gamma` con los límites de la sección 6.1. El loop espera la apertura,
+opera cada dos minutos y termina después del cierre. Las claves viven sólo en
+el `.env` de la máquina.
+
+**Primeras ruedas.**
+
+| Rueda | Ciclos | Órdenes | Llenadas | Rechazadas antes de enviar |
+|---|---|---|---|---|
+| 23/11 (desde las 10:24) | 56 | 74 | 0 | 5 |
+| 24/11 | 74 | 81 | 0 | 4 |
+
+Los dos modelos generaron señales parejas (43 y 39 el 23/11; 39 y 46 el 24/11),
+pero no se llenó ninguna orden. El diagnóstico: la orden maker esperaba 180
+segundos y se cancelaba, y Alpaca paper sólo la llena si el NBBO cruza el
+límite. En tres minutos eso casi nunca pasa, y la espera además bloqueaba el
+ciclo (56 a 74 ciclos por rueda en lugar de unos 195). En la simulación
+histórica la misma orden tenía la rueda entera para llenarse y se llenaba el 6%
+de las veces.
+
+**Corrección.** Desde el 26 de noviembre la orden de apertura queda publicada
+hasta 30 minutos (`--rest-seconds 1800`) en estado `working`, ocupa cupo como
+una posición abierta y se revisa en cada ciclo sin bloquearlo: pasa a abierta
+si el mercado la cruza y se cancela al vencer el plazo, ante cualquier corte o
+al terminar la rueda. Siete tests nuevos cubren esos casos.
+
+El reporte de cada sesión queda en `reportes/paper/session_<fecha>/`. El
+script `traer_resultados.ps1`, en `deploy/oracle/`, trae los reportes y el
+ledger a una computadora, y `scorecard.py` evalúa el criterio M4 con lo
+acumulado (opción `--ledger`). **El P&L acumulado de las dos partes se
+agrega a este informe y a la presentación con las ruedas operadas.**
+
+# 14. El proceso
 
 **Hitos.**
 
@@ -842,6 +978,8 @@ se agrega a este informe y a la presentación con las ruedas operadas.**
    con dividendo discreto, valor relativo en paper, walk-forward, calibración.
 4. Parte 2: Black-Scholes compitiendo en la misma cuenta, comparación sobre
    la cadena, coberturas con griegas en backtest y en vivo, estrés y decisión.
+5. Simulación histórica 2020–2026 del sistema completo y puesta en producción
+   en una máquina virtual gratuita, con la corrección de las órdenes maker.
 
 **Errores y correcciones.**
 
@@ -858,6 +996,9 @@ se agrega a este informe y a la presentación con las ruedas operadas.**
   pasos de árbol, contra 100 del backtest. Unificado antes de la Parte 2.
 - Material de clase: el signo de la put en la tabla de griegas y el `Var[-1]`
   del simulador de Heston.
+- En producción, la espera bloqueante de 180 segundos no llenaba ninguna orden
+  maker y frenaba el ciclo; ahora la orden queda publicada sin bloquear
+  (sección 13).
 
 **Qué funcionó y qué no.**
 
@@ -868,8 +1009,10 @@ se agrega a este informe y a la presentación con las ruedas operadas.**
   cobertura de gamma con opciones de spreads anchos.
 - El monitoreo detectó en el estrés un error que en producción habría
   cerrado cada posición al abrirla.
+- Correr el sistema completo sobre siete años convirtió una sospecha (la
+  selección adversa del walk-forward) en un resultado con 185 operaciones.
 
-# 14. Limitaciones
+# 15. Limitaciones
 
 - **Una foto por rueda, sin hora documentada.** El desfase con el cierre se
   mide y se absorbe con el spot implícito y la banda de spot, pero no se
@@ -877,7 +1020,9 @@ se agrega a este informe y a la presentación con las ruedas operadas.**
 - **Sin volumen ni open interest.** La liquidez se juzga sólo por el spread.
 - **Cuatro ruedas sin datos** en DoltHub (1, 13 y 14 de mayo; 29 de septiembre).
 - **Poca potencia estadística** en la estrategia de valor relativo con la
-  grilla declarada (16 a 20 operaciones en nueve meses).
+  grilla declarada (16 a 20 operaciones en nueve meses). La simulación
+  2020–2026 la amplía a 185 operaciones, con fotos de lunes, miércoles y viernes
+  hasta 2025 (sección 12.3).
 - **Corridas cortas en el backtest de coberturas** (1,9 días en promedio),
   porque DoltHub no trae todos los vencimientos todos los días: el costo de
   armar y desarmar pesa más que en una tenencia larga.
@@ -889,7 +1034,7 @@ se agrega a este informe y a la presentación con las ruedas operadas.**
 - **Asignación anticipada de la put vendida** en la conversión reversa: el
   detector la cubre con la cota de peor caso, pero el backtest no la simula.
 
-# 15. Literatura
+# 16. Literatura
 
 - **Cox, Ross y Rubinstein (1979)**, "Option Pricing: A Simplified Approach",
   *Journal of Financial Economics*. Es el árbol que usamos para valuar e
@@ -930,12 +1075,12 @@ se agrega a este informe y a la presentación con las ruedas operadas.**
   Financial Economics*. Explica por qué una orden pasiva al precio del modelo
   se llena en contra (sección 5.4).
 
-# 16. Reproducibilidad
+# 17. Reproducibilidad
 
 Desde `ita_options_pipeline/`:
 
 ```text
-pip install -e ".[dev]"
+pip install -e ".[dev,analisis]"
 python -m pytest
 python scripts/download_dolthub.py --start 2026-03-02 --end 2026-11-20
 python scripts/run_dolthub_analysis.py --out reportes_dolthub
@@ -946,6 +1091,9 @@ python scripts/run_hedging.py                 # sección 9
 python scripts/download_history.py            # 10 años de Yahoo, para el estrés
 python scripts/run_stress.py                  # sección 10
 python scripts/scorecard.py                   # sección 11
+python scripts/download_dolthub.py --start 2020-01-02 --end 2026-11-20 --data-root data_hist --workers 10
+python scripts/run_dolthub_analysis.py --data-root data_hist --steps curate --out reportes_replay
+python scripts/run_replay.py --data-root data_hist --out reportes_replay     # sección 12
 python scripts/check_informe.py
 ```
 
@@ -953,4 +1101,4 @@ Las descargas (`download_dolthub.py`, `download_history.py`) necesitan red;
 el resto corre sin red sobre `data/`.
 
 `check_informe.py` verifica que cada número clave de este informe coincida con
-los archivos de `reportes_dolthub/`.
+los archivos de `reportes_dolthub/` y `reportes_replay/`.
