@@ -542,6 +542,16 @@ class LiveRunner:
         return path
 
 
+def _on_session(timestamp: str | None, session_date: date) -> bool:
+    """True si un timestamp ISO del ledger cae en la rueda dada (hora de Nueva York)."""
+    if not timestamp:
+        return False
+    stamp = pd.Timestamp(timestamp)
+    if stamp.tzinfo is None:
+        stamp = stamp.tz_localize("UTC")
+    return stamp.tz_convert(NY).date() == session_date
+
+
 def write_session_report(
     ledger: Ledger,
     session_date: date,
@@ -550,12 +560,17 @@ def write_session_report(
     dry_run: bool = True,
     halted_reason: str | None = None,
 ) -> Path:
-    """Escribe estrategias, órdenes, eventos y un resumen JSON de la rueda."""
+    """Escribe estrategias, órdenes, eventos y un resumen JSON de la rueda.
+
+    El ledger acumula todas las ruedas; acá se quedan sólo las órdenes y los
+    eventos cuya fecha, en hora de Nueva York, es la de la sesión.
+    """
     target = Path(out_dir) / f"session_{session_date.isoformat()}"
     target.mkdir(parents=True, exist_ok=True)
     strategies = pd.DataFrame(ledger.strategies(session_date=session_date))
-    orders = pd.DataFrame(ledger.orders())
-    events = pd.DataFrame(ledger.events())
+    session_orders = [o for o in ledger.orders() if _on_session(o.get("submitted_at"), session_date)]
+    orders = pd.DataFrame(session_orders)
+    events = pd.DataFrame([e for e in ledger.events() if _on_session(e.get("at"), session_date)])
     strategies.drop(columns=["legs"], errors="ignore").to_csv(target / "strategies.csv", index=False)
     orders.to_csv(target / "orders.csv", index=False)
     events.to_csv(target / "events.csv", index=False)
@@ -563,7 +578,7 @@ def write_session_report(
         pd.DataFrame([asdict(c) for c in cycles]).to_csv(target / "cycles.csv", index=False)
 
     slippage = []
-    for order in ledger.orders():
+    for order in session_orders:
         request = json.loads(order["request_json"] or "{}")
         limit = request.get("limit_price")
         price = order.get("filled_avg_price")
