@@ -3,7 +3,9 @@
 El ledger es la memoria del piloto. Una estrategia agrupa todas sus patas
 (opciones y, en la paridad, acciones) y pasa por estos estados:
 
-``pending`` → ``open`` → ``closing`` → ``closed``
+``pending`` → (``working``) → ``open`` → ``closing`` → ``closed``
+
+``working`` es una orden maker de apertura publicada que todavía no se llenó.
 
 o termina antes en ``rejected``, ``rejected_pretrade``, ``aborted``,
 ``edge_gone``, ``hedge_failed``, ``unfilled`` o ``dry_run``.
@@ -31,6 +33,7 @@ from .orders import integer_ratios
 
 __all__ = [
     "OPEN_STATES",
+    "ACTIVE_STATES",
     "Ledger",
     "ReconciliationReport",
     "reconcile",
@@ -39,6 +42,8 @@ __all__ = [
 ]
 
 OPEN_STATES = ("open", "closing")
+#: Estados que ocupan cupo: las abiertas y las órdenes de apertura publicadas.
+ACTIVE_STATES = ("working", "open", "closing")
 
 _STRATEGY_COLUMNS = {
     "state", "contracts_open", "residual_edge", "entry_cash", "exit_cash",
@@ -246,11 +251,15 @@ class Ledger:
     def open_strategies(self) -> list[dict[str, Any]]:
         return self.strategies(OPEN_STATES)
 
+    def active_strategies(self) -> list[dict[str, Any]]:
+        """Abiertas más órdenes de apertura publicadas: lo que ocupa cupo."""
+        return self.strategies(ACTIVE_STATES)
+
     def seen_structure(self, key: str, session_date: date) -> bool:
         """Si la estructura ya se intentó en la rueda o sigue abierta de antes."""
         row = self._conn.execute(
             "SELECT 1 FROM strategies WHERE structure_key = ? AND (session_date = ?"
-            " OR state IN ('open', 'closing')) LIMIT 1",
+            " OR state IN ('working', 'open', 'closing')) LIMIT 1",
             (key, session_date.isoformat()),
         ).fetchone()
         return row is not None

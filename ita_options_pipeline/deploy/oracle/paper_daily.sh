@@ -27,9 +27,11 @@ git -C .. pull --ff-only >> "$log" 2>&1 || echo "$(date -Is) git pull falló; si
 # Parte 2: el binomial (CRR) y Black-Scholes compiten en la misma cuenta con la
 # misma estrategia de valor relativo (modo maker): 3 estructuras abiertas como
 # máximo por modelo, 1 unidad, payoff acotado, vencimientos entre 21 y 75 días.
+# La orden de apertura queda publicada hasta 30 minutos (maker) sin bloquear el
+# ciclo: el robot sigue marcando y cubriendo cada 2 minutos mientras espera.
 PYTHONUNBUFFERED=1 .venv/bin/python -m ita_options.pipeline paper-run --live \
     --strategy rv_compite --cap-per-model 3 --contracts 1 --max-open 6 \
-    --min-edge 10 --take-profit 0.6 --fill-timeout 180 \
+    --min-edge 10 --take-profit 0.6 --fill-timeout 180 --rest-seconds 1800 \
     --kill-switch 250 --daily-loss 1000 \
     --min-dte 21 --max-dte 75 --cycle-seconds 120 \
     --hedge delta_gamma --hedge-band 10 --hedge-max-contracts 5 >> "$log" 2>&1

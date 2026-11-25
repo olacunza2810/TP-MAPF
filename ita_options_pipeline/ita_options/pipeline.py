@@ -317,6 +317,9 @@ def _build_parser() -> argparse.ArgumentParser:
     paper.add_argument("--max-dte", type=int, default=75)
     paper.add_argument("--min-edge", type=float, default=10.0,
                        help="Edge neto mínimo por estructura, en USD.")
+    paper.add_argument("--rest-seconds", type=float, default=0.0,
+                       help="Si es > 0, la orden de apertura queda publicada (maker) hasta este "
+                            "plazo sin bloquear el ciclo; se revisa en cada vuelta.")
     paper.add_argument("--fill-timeout", type=float, default=60.0,
                        help="Segundos que una orden mleg de apertura espera el fill antes de cancelarse.")
     paper.add_argument("--hedge", choices=["none", "delta", "delta_gamma"], default="none",
@@ -511,6 +514,7 @@ def _run_paper(args: argparse.Namespace) -> None:
         detectors=tuple(args.detectors), take_profit_fraction=args.take_profit,
         min_dte=args.min_dte, max_dte=args.max_dte, min_edge_usd=args.min_edge,
         option_fill_timeout_s=args.fill_timeout,
+        option_rest_s=args.rest_seconds,
     )
     config = PipelineConfig(credentials=credentials, underlyings=tuple(args.tickers),
                             data_root=data_root)

@@ -13,10 +13,16 @@ Política de una ``mleg``:
 3. Re-precio: hasta ``max_reprices`` veces, empeorando ``reprice_step`` por
    unidad escalada, **sólo si el edge al nuevo precio sigue siendo al menos
    ``min_edge_usd``**.
+
+Con ``option_rest_s > 0`` la apertura es **maker sin bloqueo**: la orden se
+publica y queda ``working``; el loop la revisa en cada ciclo con
+:func:`settle_working` y la cancela al vencer el plazo. Así una orden que
+espera no frena el monitoreo de las posiciones abiertas.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from collections.abc import Callable, Mapping
@@ -40,6 +46,7 @@ __all__ = [
     "edge_at_scaled_debit",
     "option_net_cash",
     "execute_mleg",
+    "settle_working",
     "close_options",
 ]
 
@@ -164,6 +171,9 @@ def execute_mleg(
             ledger.record_order(strategy_id, "mleg_open", request, error=exc.message)
             return ExecutionOutcome("rejected", messages=[*messages, exc.message])
         ledger.record_order(strategy_id, "mleg_open", request, snapshot)
+        if settings.option_rest_s > 0 and not snapshot.is_filled and not snapshot.is_final:
+            # Maker sin bloqueo: la orden queda publicada y el loop la sigue.
+            return ExecutionOutcome("working", messages=[*messages, f"publicada a {limit:+.2f}"])
         snapshot = wait_for_fill(broker, ledger, snapshot, settings.option_fill_timeout_s,
                                  settings.order_poll_s, timing)
         if not snapshot.is_filled:
@@ -178,6 +188,50 @@ def execute_mleg(
             )
         messages.append(f"intento {attempt}: sin fill a {limit:+.2f}")
     return ExecutionOutcome("unfilled", messages=messages)
+
+
+def settle_working(
+    broker: Broker,
+    ledger: Ledger,
+    strategy: Mapping[str, Any],
+    settings: ExecutionSettings,
+    timing: Timing | None = None,
+    cancel: bool = False,
+) -> ExecutionOutcome | None:
+    """Revisa la orden de apertura publicada de una estrategia ``working``.
+
+    Args:
+        broker: Broker.
+        ledger: Ledger.
+        strategy: Estrategia en estado ``working``.
+        settings: Parámetros de ejecución.
+        timing: Reloj inyectable.
+        cancel: Si es ``True`` (plazo vencido, corte o fin de rueda), cancela
+            la orden si sigue viva y devuelve su resultado final.
+
+    Returns:
+        ``None`` si la orden sigue publicada sin llenarse; si no, el resultado:
+        ``open`` con la caja de entrada si llenó (total o parcialmente) o
+        ``unfilled`` si terminó sin fills.
+    """
+    timing = timing or Timing()
+    opens = [o for o in ledger.orders(strategy["id"]) if o["role"] == "mleg_open" and o["broker_id"]]
+    if not opens:
+        return ExecutionOutcome("unfilled", messages=["sin orden de apertura registrada"])
+    order = opens[-1]
+    snapshot = broker.get_order(order["broker_id"])
+    ledger.update_order(snapshot)
+    if not snapshot.is_filled and not snapshot.is_final and not cancel:
+        return None
+    if not snapshot.is_filled:
+        snapshot = cancel_and_settle(broker, ledger, snapshot, settings.order_poll_s, timing)
+    units = int(snapshot.filled_qty)
+    if units <= 0:
+        return ExecutionOutcome("unfilled", messages=[f"orden maker sin fill ({snapshot.status})"])
+    limit = float(json.loads(order["request_json"] or "{}").get("limit_price", float("nan")))
+    edge = float(strategy.get("predicted_edge") or float("nan")) * units
+    return ExecutionOutcome("open", units, option_net_cash(snapshot, limit, units), edge,
+                            messages=[f"orden maker llenada: {units} unidades"])
 
 
 def close_options(

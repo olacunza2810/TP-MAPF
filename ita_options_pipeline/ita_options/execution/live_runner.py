@@ -44,7 +44,7 @@ from .live_data import MarketData, build_live_chain, detect_live
 from .orders import OrderConstructionError, build_mleg_order, mleg_limit_price, scaled_net_debit
 from .parity import ParitySequencer
 from .risk import pre_trade_check
-from .router import Timing, close_options, execute_mleg
+from .router import settle_working, Timing, close_options, execute_mleg
 
 __all__ = ["CycleReport", "LiveRunner", "mark_value", "write_session_report"]
 
@@ -161,6 +161,8 @@ class LiveRunner:
         self._hedge_baseline: tuple[date, float] | None = None
         self._last_chain: pd.DataFrame | None = None
         self._last_spots: Mapping[str, float] = {}
+        # Órdenes maker de apertura publicadas: estrategia -> momento de publicación.
+        self._working_since: dict[str, pd.Timestamp] = {}
 
     # -- control ------------------------------------------------------------
 
@@ -246,6 +248,10 @@ class LiveRunner:
         )
 
         try:
+            if not self.dry_run:
+                # Primero las órdenes maker publicadas: si alguna se llenó, entra
+                # a la gestión de posiciones de este mismo ciclo.
+                self._check_working(report)
             if Path(self.settings.kill_file).exists():
                 self._halt("kill_file")
                 self._close_all("kill_file", quote_index, spots, report)
@@ -257,6 +263,9 @@ class LiveRunner:
                 self._enter(chain, today, report)
             if self.hedger is not None and self.halted_reason is None:
                 self._hedge(chain, spots, report)
+            if self.halted_reason is not None and not self.dry_run:
+                # Con las entradas detenidas no quedan órdenes de apertura vivas.
+                self._check_working(report, cancel_all=True)
         except Exception as exc:  # noqa: BLE001 - nunca abandonar el loop con órdenes vivas
             # Una excepción acá puede ocurrir en medio de una secuencia (por
             # ejemplo, con las acciones ya llenadas y antes de enviar las
@@ -327,9 +336,40 @@ class LiveRunner:
             self._halt("perdida_diaria")
             self._close_all("perdida_diaria", quotes, spots, report)
 
+    def _check_working(self, report: CycleReport, cancel_all: bool = False) -> None:
+        """Revisa las órdenes maker de apertura y cancela las vencidas.
+
+        Una orden llenada pasa a ``open`` con su caja de entrada; una vencida (o
+        todas, con ``cancel_all``) se cancela y, si no llenó, queda ``unfilled``.
+        Una estrategia ``working`` sin hora de publicación conocida (por ejemplo,
+        tras reiniciar el proceso) se cancela.
+        """
+        rest = pd.Timedelta(seconds=float(self.settings.option_rest_s))
+        now = self._now()
+        for strategy in self.ledger.strategies(("working",)):
+            since = self._working_since.get(strategy["id"])
+            expired = cancel_all or since is None or (now - since) >= rest
+            outcome = settle_working(self.broker, self.ledger, strategy, self.settings,
+                                     self.timing, cancel=expired)
+            if outcome is None:
+                continue
+            self._working_since.pop(strategy["id"], None)
+            self.ledger.update_strategy(
+                strategy["id"], state=outcome.state, contracts_open=outcome.contracts_open,
+                entry_cash=outcome.entry_cash, residual_edge=outcome.residual_edge,
+                message="; ".join(outcome.messages) or None,
+            )
+            self.ledger.event("maker_fill" if outcome.state == "open" else "maker_sin_fill",
+                              {"minutos": None if since is None else (now - since).total_seconds() / 60},
+                              strategy["id"])
+            if outcome.state == "open":
+                report.entries_opened += 1
+
     def _close_all(
         self, reason: str, quotes: pd.DataFrame, spots: Mapping[str, float], report: CycleReport
     ) -> None:
+        if not self.dry_run:
+            self._check_working(report, cancel_all=True)
         for strategy in self.ledger.open_strategies():
             self._close(strategy, reason, quotes, report)
         if self.hedger is not None and not self.dry_run:
@@ -413,7 +453,8 @@ class LiveRunner:
         return planned
 
     def _enter(self, chain: pd.DataFrame, today: date, report: CycleReport) -> None:
-        open_count = len(self.ledger.open_strategies())
+        # Las órdenes maker publicadas ocupan cupo igual que las abiertas.
+        open_count = len(self.ledger.active_strategies())
         if open_count >= self.settings.max_open_strategies:
             return
         signals = self._signal_source(chain)
@@ -466,6 +507,9 @@ class LiveRunner:
             if outcome.state == "open":
                 open_count += 1
                 report.entries_opened += 1
+            elif outcome.state == "working":
+                open_count += 1
+                self._working_since[strategy_id] = self._now()
 
     # -- sesión -------------------------------------------------------------
 
@@ -485,6 +529,13 @@ class LiveRunner:
                     break
                 self.timing.sleep(self.settings.cycle_seconds if report.phase != "closed" else 300.0)
         finally:
+            if not self.dry_run:
+                # Ninguna orden de apertura queda publicada fuera de la rueda.
+                try:
+                    self._check_working(CycleReport(at=self._now().isoformat(), phase="fin"),
+                                        cancel_all=True)
+                except Exception as exc:  # noqa: BLE001 - el reporte se escribe igual
+                    self.ledger.event("cycle_error", {"error": repr(exc), "etapa": "cancelar_working"})
             session = self._now().tz_convert(NY).date()
             path = write_session_report(self.ledger, session, self.report_dir, self.cycles,
                                         self.dry_run, self.halted_reason)

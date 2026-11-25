@@ -259,6 +259,10 @@ class ExecutionSettings:
             salida natural de una estrategia de valor relativo: el edge se
             realiza cuando el mercado converge al modelo, no al vencimiento.
         min_dte: Días mínimos al vencimiento del universo en vivo.
+        option_rest_s: Si es mayor que cero, la ``mleg`` de apertura queda
+            publicada (orden maker) hasta ese plazo sin bloquear el ciclo: se
+            revisa en cada vuelta y se cancela al vencer. Con cero se usa la
+            espera bloqueante de ``option_fill_timeout_s``.
     """
 
     contracts: int = 1
@@ -290,6 +294,7 @@ class ExecutionSettings:
     max_consecutive_errors: int = 3
     take_profit_fraction: float | None = None
     min_dte: int = 0
+    option_rest_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

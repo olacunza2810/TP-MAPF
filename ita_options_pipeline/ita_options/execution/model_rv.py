@@ -383,7 +383,9 @@ class CompetingModels:
         return frozenset(str(leg["symbol"]) for leg in legs if leg.get("kind", "option") == "option")
 
     def __call__(self, chain: pd.DataFrame) -> pd.DataFrame:
-        open_strategies = self.ledger.open_strategies()
+        # Las órdenes maker publicadas ocupan cupo igual que las abiertas.
+        active = getattr(self.ledger, "active_strategies", self.ledger.open_strategies)
+        open_strategies = active()
         counts = {model: 0 for model in self.settings}
         held: set[frozenset[str]] = set()
         for strategy in open_strategies:

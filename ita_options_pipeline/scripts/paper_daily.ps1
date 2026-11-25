@@ -22,7 +22,7 @@ $log = Join-Path $logDir ((Get-Date -Format "yyyy-MM-dd") + ".log")
 # máximo por modelo, 1 unidad, payoff acotado, vencimientos entre 21 y 75 días.
 python -m ita_options.pipeline paper-run --live `
     --strategy rv_compite --cap-per-model 3 --contracts 1 --max-open 6 `
-    --min-edge 10 --take-profit 0.6 --fill-timeout 180 `
+    --min-edge 10 --take-profit 0.6 --fill-timeout 180 --rest-seconds 1800 `
     --kill-switch 250 --daily-loss 1000 `
     --min-dte 21 --max-dte 75 --cycle-seconds 120 `
     --hedge delta_gamma --hedge-band 10 --hedge-max-contracts 5 *>> $log

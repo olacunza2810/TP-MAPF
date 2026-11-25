@@ -125,6 +125,17 @@ class FakeBroker:
         self._orders[order_id] = snapshot
         return snapshot
 
+    def fill_resting(self, order_id: str) -> None:
+        """Llena completa una ``mleg`` publicada, al límite, como si el mercado la cruzara."""
+        snapshot = self._orders[order_id]
+        request = next(r for r in self.submitted if r.client_order_id == snapshot.client_order_id)
+        for leg in request.legs:
+            sign = 1.0 if leg.side == OrderSide.BUY else -1.0
+            self._apply(leg.symbol, sign * leg.ratio_qty * snapshot.qty)
+        self._orders[order_id] = OrderSnapshot(**{**snapshot.__dict__, "status": "filled",
+                                                  "filled_qty": snapshot.qty,
+                                                  "filled_avg_price": float(request.limit_price)})
+
     def get_order(self, order_id: str) -> OrderSnapshot:
         return self._orders[order_id]
 
