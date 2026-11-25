@@ -47,7 +47,6 @@ import argparse
 import json
 import math
 import sqlite3
-import sys
 from pathlib import Path
 
 import pandas as pd

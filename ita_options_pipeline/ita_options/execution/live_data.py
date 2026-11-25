@@ -52,13 +52,17 @@ _MASTER_COLUMNS = ["symbol", "underlying", "expiration", "strike", "option_type"
 class MarketData(Protocol):
     """Fuente de datos del loop."""
 
-    def spots(self) -> dict[str, float]: ...
+    def spots(self) -> dict[str, float]:
+        """Último precio de cada subyacente."""
 
-    def universe(self, spots: Mapping[str, float]) -> pd.DataFrame: ...
+    def universe(self, spots: Mapping[str, float]) -> pd.DataFrame:
+        """Contratos de opciones vigentes alrededor del spot."""
 
-    def quotes(self, symbols: Sequence[str]) -> pd.DataFrame: ...
+    def quotes(self, symbols: Sequence[str]) -> pd.DataFrame:
+        """Bid y ask actuales de los contratos pedidos."""
 
-    def bars(self, now: pd.Timestamp) -> pd.DataFrame: ...
+    def bars(self, now: pd.Timestamp) -> pd.DataFrame:
+        """Barras de un minuto de los subyacentes hasta ``now``."""
 
 
 #: Tolerancia para aparear un quote con la barra de 1 minuto vigente.
@@ -161,12 +165,14 @@ class AlpacaMarketData:
         return AsyncAlpacaGateway(self._config.credentials, self._config.ingestion)
 
     def spots(self) -> dict[str, float]:
+        """Último precio de cada subyacente en Alpaca."""
         async def run() -> dict[str, float]:
             return await self._gateway().fetch_stock_latest_mids(self._config.underlyings)
 
         return asyncio.run(run())
 
     def universe(self, spots: Mapping[str, float]) -> pd.DataFrame:
+        """Contratos vigentes alrededor del spot, desde el endpoint de contratos de Alpaca."""
         from ..ingest import UniverseBuilder
 
         async def run() -> pd.DataFrame:
@@ -178,6 +184,7 @@ class AlpacaMarketData:
         return master.loc[master["tradable"]] if "tradable" in master.columns else master
 
     def quotes(self, symbols: Sequence[str]) -> pd.DataFrame:
+        """Snapshots de bid y ask de los contratos pedidos."""
         from ..ingest import SnapshotRecorder
 
         async def run() -> pd.DataFrame:

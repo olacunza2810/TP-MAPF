@@ -117,17 +117,23 @@ class BrokerRejection(RuntimeError):
 class Broker(Protocol):
     """Operaciones que la capa de ejecución necesita del broker."""
 
-    def submit(self, request: Any) -> OrderSnapshot: ...
+    def submit(self, request: Any) -> OrderSnapshot:
+        """Envía una orden y devuelve su estado inicial."""
 
-    def get_order(self, order_id: str) -> OrderSnapshot: ...
+    def get_order(self, order_id: str) -> OrderSnapshot:
+        """Estado actual de una orden."""
 
-    def cancel(self, order_id: str) -> None: ...
+    def cancel(self, order_id: str) -> None:
+        """Pide la cancelación de una orden."""
 
-    def positions(self) -> dict[str, float]: ...
+    def positions(self) -> dict[str, float]:
+        """Posiciones abiertas por símbolo, con signo (negativo = corta)."""
 
-    def account(self) -> Any: ...
+    def account(self) -> Any:
+        """Datos de la cuenta (buying power, nivel de opciones)."""
 
-    def clock(self) -> Any: ...
+    def clock(self) -> Any:
+        """Reloj de mercado: si está abierto y los próximos horarios."""
 
 
 def signed_quantity(qty: Any, side: Any) -> float:
@@ -173,6 +179,7 @@ class AlpacaBroker:
         return snapshot_from_order(order)
 
     def get_order(self, order_id: str) -> OrderSnapshot:
+        """Estado actual de una orden en Alpaca."""
         return snapshot_from_order(self._client.get_order_by_id(order_id))
 
     def cancel(self, order_id: str) -> None:
@@ -197,7 +204,9 @@ class AlpacaBroker:
         return {p.symbol: signed_quantity(p.qty, p.side) for p in self._client.get_all_positions()}
 
     def account(self) -> Any:
+        """Cuenta de Alpaca."""
         return self._client.get_account()
 
     def clock(self) -> Any:
+        """Reloj de mercado de Alpaca."""
         return self._client.get_clock()

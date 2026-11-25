@@ -81,6 +81,7 @@ class Greeks:
     rho: float
 
     def as_dict(self) -> dict[str, float]:
+        """Las griegas como diccionario, para armar tablas."""
         return asdict(self)
 
     def scaled(self, quantity: float) -> "Greeks":

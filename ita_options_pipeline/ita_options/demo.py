@@ -20,7 +20,7 @@ evidencia empírica de nada: sirven para probar la cañería.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -244,7 +244,7 @@ def run_offline_demo(data_root: Path, verbose: bool = True) -> dict[str, object]
     say("=" * 72)
 
     quotes, underlying = generate_market()
-    say(f"\n1. Mercado generado")
+    say("\n1. Mercado generado")
     say(f"   {len(quotes):,} cotizaciones | "
         f"{quotes['timestamp'].nunique()} cortes | "
         f"{quotes['symbol'].nunique():,} contratos | "
@@ -253,7 +253,7 @@ def run_offline_demo(data_root: Path, verbose: bool = True) -> dict[str, object]
     frame = compute_mid_and_spread(quotes)
     frame = align_underlying(frame, underlying, bar_duration=timedelta(minutes=1))
     matched = frame["underlying_price"].notna().mean()
-    say(f"\n2. Alineación contra el subyacente (anti-lookahead)")
+    say("\n2. Alineación contra el subyacente (anti-lookahead)")
     say(f"   {matched:.1%} de las cotizaciones con spot vigente | "
         f"rezago mediano {frame['alignment_lag_s'].median():.0f}s")
 
@@ -264,13 +264,13 @@ def run_offline_demo(data_root: Path, verbose: bool = True) -> dict[str, object]
         frame, PricingAssumptions(binomial_steps=64)
     )
     iv = frame["iv_american"].dropna()
-    say(f"\n3. Volatilidad implícita (árbol CRR americano)")
+    say("\n3. Volatilidad implícita (árbol CRR americano)")
     say(f"   {len(iv):,}/{len(frame):,} invertidas | "
         f"mediana {iv.median():.1%} | rango {iv.min():.1%}–{iv.max():.1%}")
     say(f"   fuera de cotas de no arbitraje: {int(frame['violates_bounds'].sum())}")
 
     frame, report = apply_liquidity_filters(frame, LiquidityThresholds())
-    say(f"\n4. Filtros de liquidez")
+    say("\n4. Filtros de liquidez")
     say(f"   {report.surviving_rows:,}/{report.total_rows:,} explotables "
         f"({report.survival_rate:.1%})")
     for _, row in report.to_frame().head(4).iterrows():
@@ -286,14 +286,14 @@ def run_offline_demo(data_root: Path, verbose: bool = True) -> dict[str, object]
     store = ParquetStore(demo_root, "demo_quotes")
     written = store.write(frame)
     reread = store.read(underlyings=list(_UNDERLYINGS))
-    say(f"\n5. Persistencia en parquet")
+    say("\n5. Persistencia en parquet")
     say(f"   escritas {written:,} | releídas {len(reread):,} | "
         f"columnas {len(reread.columns)} | "
         f"is_tradable sobrevive: {'is_tradable' in reread.columns}")
 
     snapshot = frame.loc[frame["timestamp"] == frame["timestamp"].max()]
     found = run_all_detectors(snapshot, ExecutionCosts(min_net_edge=5.0))
-    say(f"\n6. Detección de arbitrajes (último corte)")
+    say("\n6. Detección de arbitrajes (último corte)")
     if found.empty:
         say("   sin oportunidades sobre el umbral")
     else:
@@ -304,7 +304,7 @@ def run_offline_demo(data_root: Path, verbose: bool = True) -> dict[str, object]
             f"strikes {top['strikes']} → {top['net_edge_usd']:,.0f} USD")
 
     engine = ArbitrageBacktester(frame, underlying, ExecutionCosts(min_net_edge=5.0))
-    say(f"\n7. Backtest — sensibilidad a la latencia")
+    say("\n7. Backtest — sensibilidad a la latencia")
     say(f"   {'latencia':>10} {'operaciones':>12} {'P&L USD':>12} {'edge capt.':>11}")
     results = {}
     for minutes in (1, 5, 15):
@@ -324,7 +324,7 @@ def run_offline_demo(data_root: Path, verbose: bool = True) -> dict[str, object]
             results["exit_reasons"] = motivos
 
     if results.get("exit_reasons"):
-        say(f"\n   Motivo de cierre: "
+        say("\n   Motivo de cierre: "
             + ", ".join(f"{k}={v}" for k, v in results["exit_reasons"].items()))
         say("   El mercado sintético abarca una hora y los vencimientos son a")
         say("   meses, así que las posiciones se cierran por fin de datos, no al")

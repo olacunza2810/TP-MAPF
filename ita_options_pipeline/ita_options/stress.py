@@ -361,6 +361,7 @@ class Leg:
 
 @dataclass
 class Structure:
+    """Estructura de la cartera estresada: patas, modelo y edge al abrir."""
     model: str
     name: str
     legs: list[Leg]
@@ -390,6 +391,7 @@ class HedgeOption:
     max_moneyness: float = 0.05
 
     def sigma(self, model: str, strikes: np.ndarray) -> np.ndarray:
+        """Volatilidad de la opción de cobertura según su strike, con la sonrisa del día."""
         sm = self.smile[model]
         k = np.log(strikes / sm.forward)
         return np.clip(sm.a + sm.b * k + sm.c * k * k, 0.03, 3.0)
@@ -397,6 +399,7 @@ class HedgeOption:
 
 @dataclass
 class Book:
+    """Cartera de un modelo: sus estructuras y la opción de cobertura de gamma."""
     model: str
     structures: list[Structure]
     gamma_options: dict[int, HedgeOption] = field(default_factory=dict)

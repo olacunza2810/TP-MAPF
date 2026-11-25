@@ -1,449 +1,127 @@
-# Pipeline de datos de opciones — Grupo 3 (Defensa / ITA)
+# `ita_options` — paquete del Grupo 3 (Defensa / ITA)
 
-Extracción, alineación y curado de un dataset de opciones sobre **RTX**, **BA**
-y **LMT** (constituyentes individuales del ETF ITA) para alimentar un backtest de
-arbitraje binomial sin sesgos.
+Valuación, detección, backtest, coberturas, estrés y ejecución en paper trading
+de opciones sobre **RTX**, **BA** y **LMT**, acciones individuales del ETF ITA.
+Este README describe el código; los resultados y su interpretación están en
+[`informe_proyecto.md`](informe_proyecto.md) y en
+[`resumen_presentacion/`](resumen_presentacion/).
 
-```
-ita_options/
-├── config.py       Configuración tipada + manifiesto reproducible
-├── schemas.py      Contrato de columnas y dtypes
-├── volatility.py   BSM + árbol CRR americano + inversión de IV
-├── calibration.py  Perfiles calibrados por activo + jump-diffusion de Merton
-├── clients.py      Gateway asincrónico sobre alpaca-py (rate limit + retries)
-├── ingest.py       Universo, recorder point-in-time, backfill de bars
-├── enrich.py       Alineación anti-lookahead, mid/spread, DTE, IV
-├── filters.py      Filtros de liquidez con reporte auditable
-├── storage.py      Parquet particionado (underlying / trade_date)
-├── arbitrage.py    Seis detectores: cinco model-free + uno contra modelo
-├── backtest.py     Motor event-driven con barrera anti-lookahead
-├── evaluation.py   Métricas, split in-sample/out-of-sample, Sharpe deflactado
-├── demo.py         Mercado sintético + corrida offline del pipeline completo
-├── doctor.py       Diagnóstico de conectividad, permisos de cuenta y datos disponibles
-├── dolthub.py      Curación de la foto diaria de DoltHub: spot implícito, dividendos point-in-time
-├── rv_backtest.py  Backtest y walk-forward de la estrategia de valor relativo
-├── execution/      Paper trading: órdenes mleg, riesgo previo, ledger, loop en vivo y
-│                   estrategia de valor relativo contra el modelo (model_rv.py)
-└── pipeline.py     Orquestador + CLI
-scripts/                       Descarga (DoltHub, Polygon), análisis, calibración y control del informe
-reportes_dolthub/              Resultados vigentes (CSV y gráficos) citados en el informe
-tests/                         Tests, incluidos tests de contrato contra el SDK real
-validate_sample.py             Valida la muestra sintética y genera outputs/validacion_distribucion.png
-justificacion_generacion_datos.md  Metodología y justificación de la muestra sintética
-informe_proyecto.md            Informe consolidado (los números se validan con scripts/check_informe.py)
-generate_report_pdf.py         Renderiza informe_proyecto.html a PDF
-ESTADO.md                      Documento de traspaso: qué está hecho y qué falta
-```
-
-El grafo de dependencias es acíclico y tiene cuatro capas: `volatility`,
-`config`, `schemas` y `calibration` no dependen de nada; `arbitrage` depende
-sólo de `volatility`; `backtest` de `arbitrage`; `evaluation` de `backtest`; y
-`demo` usa `calibration` para generar el mercado. Por eso los detectores, el
-árbol y la calibración se pueden testear sin credenciales ni red.
-
-## Instalación y uso
+## Instalación
 
 Requiere Python 3.11 o superior.
 
 ```bash
-pip install -e .                    # instala el paquete y el comando ita-options
-pip install -e ".[dev]"             # con pytest, para correr los tests
-
-# Windows PowerShell
-$env:ALPACA_API_KEY="..."; $env:ALPACA_SECRET_KEY="..."
-# macOS / Linux
-export ALPACA_API_KEY=... ALPACA_SECRET_KEY=...
-```
-
-```bash
-ita-options demo                    # pipeline completo offline, sin credenciales (~1 min)
-ita-options doctor                  # EMPEZAR ACÁ con claves: diagnostica en 2 segundos
-ita-options universe                # maestro de contratos
-ita-options detect --min-edge 5     # arbitrajes sobre la cadena en vivo
-ita-options record --interval 300   # grabación point-in-time (dejar corriendo)
-ita-options backfill --start 2025-09-01 --end 2026-09-01
-ita-options enrich --start 2026-09-01
-
-pytest                              # 98 tests, sin red ni credenciales
-python validate_sample.py           # valida la muestra sintética y guarda la figura
+pip install -e ".[dev]"             # paquete + pytest
+pip install -e ".[dev,analisis]"    # + matplotlib y lo necesario para regenerar gráficos y el PDF del informe
+python -m pytest                    # 191 tests, sin red ni credenciales (~30 s)
+ita-options demo                    # pipeline completo sobre un mercado sintético, offline
 ```
 
 Si el comando `ita-options` no está en el PATH, usar
 `python -m ita_options.pipeline <subcomando>`.
 
-**Tickers.** Los perfiles calibrados y `PipelineConfig` usan RTX, BA y LMT,
-pero los subcomandos de red de la CLI toman por defecto `--tickers RTX BA`. Para
-incluir LMT hay que pasarlo explícito:
-`ita-options --tickers RTX BA LMT record`. La `demo` siempre usa los tres.
+## Mapa del código
 
-`doctor` corre los seis chequeos en el orden en que el pipeline los necesita y
-se detiene en el primero que falla. Cada chequeo que pasa reporta una medición:
-cantidad de contratos, cobertura de open interest, porcentaje con NBBO real y
-**spread relativo mediano**, que es el número que determina si la estrategia es
-viable.
+```
+ita_options/
+├── Datos
+│   ├── dolthub.py          Curación de la foto diaria de DoltHub: spot implícito, dividendos point-in-time
+│   ├── clients.py          Acceso asincrónico a Alpaca (rate limit y reintentos)
+│   ├── ingest.py           Universo, grabación point-in-time y backfill
+│   ├── enrich.py           Alineación anti-lookahead, mid/spread, DTE, IV
+│   ├── daily.py            Modo diario sobre velas EOD de Polygon (Parte 1, histórico)
+│   ├── filters.py          Filtros de liquidez con reporte auditable
+│   ├── schemas.py          Contrato de columnas y tipos
+│   └── storage.py          Parquet particionado y manifiesto reproducible
+├── Valuación
+│   ├── volatility.py       Black-Scholes, árbol CRR americano e inversión de IV
+│   ├── greeks.py           BS y CRR con dividendo discreto escrowed, y sus griegas
+│   └── escrowed.py         Precio e IV con dividendo discreto para toda la cadena
+├── Estrategia y backtest
+│   ├── arbitrage.py        Cinco detectores model-free y uno contra el modelo
+│   ├── backtest.py         Motor event-driven con barrera anti-lookahead
+│   ├── rv_backtest.py      Backtest y walk-forward de la estrategia de valor relativo
+│   └── evaluation.py       Métricas, split IS/OOS y Sharpe deflactado
+├── Parte 2
+│   ├── model_comparison.py BS contra binomial: prima de ejercicio y Diebold-Mariano (paso 3)
+│   ├── hedging.py          Backtest de coberturas con griegas (paso 4)
+│   ├── stress.py           Monte Carlo GBM / Heston / Merton correlacionado (paso 5)
+│   └── replay.py           Simulación histórica 2020–2026 del sistema completo
+├── execution/              Paper trading en Alpaca
+│   ├── live_runner.py      Loop de la rueda: datos, señales, ejecución, cobertura y riesgo
+│   ├── model_rv.py         Señales de valor relativo y competencia entre modelos (rv_compite)
+│   ├── router.py           Órdenes mleg: espera bloqueante o maker publicada (--rest-seconds)
+│   ├── hedger.py           Cobertura delta y delta-gamma en vivo, un libro por modelo
+│   ├── ledger.py           Registro SQLite de estrategias, órdenes y eventos; reconciliación
+│   ├── risk.py             Controles previos al envío
+│   ├── orders.py           Construcción de órdenes multipata
+│   ├── parity.py           Secuencia de la paridad put-call en patas separadas
+│   ├── live_data.py        Universo, snapshots y cadena curada en vivo
+│   └── broker.py           Interfaz mínima del broker
+├── calibration.py, demo.py Mercado sintético y demo offline
+├── doctor.py               Diagnóstico de conectividad, permisos y datos
+├── config.py               Configuración tipada
+└── pipeline.py             CLI (ita-options)
+```
 
----
+Las capas de valuación y estrategia no dependen de la red: por eso los
+detectores, los árboles, las coberturas y el loop en vivo (contra un broker
+simulado, `tests/fake_broker.py`) se testean sin credenciales.
 
-## Limitación estructural de Alpaca (leer antes de diseñar el backtest)
+## Reproducir los resultados
 
-**Alpaca no expone quotes históricos de opciones.** El
-`OptionHistoricalDataClient` ofrece bars, trades, *latest* quote, snapshot y
-chain. El endpoint de chain devuelve bid/ask, IV y griegas, pero es un snapshot
-vivo: no acepta parámetro de fecha y no permite reconstruir la superficie de un
-día pasado.
+Cada número del informe sale de un script. Con red (DoltHub y Yahoo):
 
-Consecuencias, y cómo las resuelve este pipeline:
-
-| Necesidad | Disponible en Alpaca | Estrategia |
+| Paso | Comando | Salida |
 |---|---|---|
-| Bid/ask histórico | No | `SnapshotRecorder` graba el chain cada N segundos y construye la serie hacia adelante |
-| Historia previa de precios de opción | Bars OHLCV por contrato | `HistoricalBackfill`, con spread estimado y marcado `spread_is_proxy=True` |
-| Open interest | Endpoint de contratos, con lag de 1 día (cálculo EOD de OCC) | `attach_lagged_open_interest` anula el OI cuya fecha de publicación no es anterior al quote |
-| Universo histórico de contratos | Sólo el vigente | Maestro append-only diario en `contract_master/` |
+| Datos 2026 (~20 min) | `python scripts/download_dolthub.py --start 2026-03-02 --end 2026-11-20` | `data/dolthub/` |
+| Curación, detectores, backtest y walk-forward | `python scripts/run_dolthub_analysis.py --out reportes_dolthub` | `reportes_dolthub/` |
+| Calibración | `python scripts/run_calibration.py --out reportes_dolthub` | `calibracion_*` |
+| Sensibilidad de la estrategia | `python scripts/run_rv_sensitivity.py --out reportes_dolthub` | `rv_sensibilidad_*` |
+| BS contra binomial | `python scripts/run_model_comparison.py` | `comparacion_*` |
+| Coberturas | `python scripts/run_hedging.py` | `cobertura_*` |
+| Estrés Monte Carlo (~11 min) | `python scripts/download_history.py` y `python scripts/run_stress.py` | `estres_*` |
+| Tabla de decisión | `python scripts/scorecard.py` | `scorecard.json` |
+| Historia 2020–2026 (~70 min) | `python scripts/download_dolthub.py --start 2020-01-02 --end 2026-11-20 --data-root data_hist --workers 10` | `data_hist/` |
+| Curación de la historia | `python scripts/run_dolthub_analysis.py --data-root data_hist --steps curate --out reportes_replay` | `data_hist/dolthub/curated.parquet` |
+| Simulación histórica (~15 min) | `python scripts/run_replay.py --data-root data_hist --out reportes_replay` | `reportes_replay/` |
+| Control del informe | `python scripts/check_informe.py` | verifica 90 números contra `reportes_dolthub/` |
+| Gráficos y PDF del resumen | `python resumen_presentacion/hacer_graficos.py` y, en esa carpeta, `latexmk -xelatex -jobname=Resumen_Presentacion_Grupo3 resumen.tex` | `resumen_presentacion/` |
 
-**La implicancia operativa es que el recorder debería estar corriendo ya.** Cada
-día sin grabar es un día que no vas a tener en la Parte 2, cuando haya que
-comparar binomial contra Black-Scholes sobre el mismo dataset.
+## Paper trading
 
-### Feed
+Las claves de Alpaca **paper** van en `.env` (excluido de git):
 
-Por defecto `indicative`: gratuito, pero con quotes **modificados y demorados 15
-minutos**. Sirve para calibrar y para el backtest; no sirve para arbitraje en
-vivo. `opra` requiere Algo Trader Plus. La elección debe declararse en la
-presentación: un arbitraje detectado sobre un feed demorado 15 minutos no es
-explotable, y los profesores lo van a preguntar.
-
-### Modo diario con Polygon (Massive) gratuito
-
-El plan gratuito de Polygon no incluye quotes de opciones y admite 5 requests
-por minuto, pero sí velas diarias (OHLCV + VWAP) por contrato. El modo diario
-corre todo el pipeline sobre ese insumo:
-
-```powershell
-$env:POLYGON_API_KEY="..."
-python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31 --dry-run   # plan y horas, sin red
-python scripts/download_polygon.py --start 2025-01-02 --end 2025-12-31
-python -m ita_options.pipeline --tickers RTX BA LMT enrich-daily --price-source close --assumed-spread 0.05
-python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --report-dir reportes
 ```
-
-`--tickers` puede ir antes o después del subcomando, con espacios o comas
-(`--tickers RTX,BA,LMT`). Para una grilla sobre el spread supuesto se re-cura
-entre backtests; `--report-dir` acumula una fila por configuración en
-`summary.csv` y guarda operaciones, embudo y desgloses de cada una:
-
-```powershell
-foreach ($s in 0.02, 0.05) {
-  python -m ita_options.pipeline --tickers RTX BA LMT enrich-daily --assumed-spread $s
-  python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --report-dir reportes
-  python -m ita_options.pipeline --tickers RTX BA LMT backtest-daily --lag-sessions 1 2 --stop-loss 2000 --report-dir reportes
-}
+ALPACA_API_KEY=...
+ALPACA_SECRET_KEY=...
+ALPACA_PAPER=true
 ```
-
-La grilla factorial usada en el informe (fuente × spread × latencia ×
-kill-switch = 16 configuraciones, con Sharpe deflactado y estimación del fondeo
-no contabilizado en la paridad) se reproduce con un solo comando:
-
-```powershell
-python scripts/run_daily_grid.py --out reportes_final
-```
-
-- **Descarga.** Una vela diaria por contrato para toda su ventana en un solo
-  request; universo acotado a los `--nearest-monthlies` vencimientos mensuales
-  más próximos y a `--max-strikes-per-side` strikes por lado dentro de
-  ±`--band` del spot de la rueda previa. 12 s entre requests y backoff ante 429.
-  Reanudable: lo descargado queda en caché.
-- **Curación** (`ita_options/daily.py`). Cada fila se sella al cierre de su
-  rueda (16:00 ET). Bid y ask se **sintetizan** alrededor del close o del VWAP
-  con un spread supuesto y quedan con `spread_is_proxy=True`.
-- **Liquidez.** `LiquidityThresholds.for_daily_bars()` filtra por el volumen de
-  la rueda anterior (`volume_prev_day`), sin spread ni open interest.
-- **Backtest.** La señal sale del cierre de `t` y la orden se llena, como
-  mínimo, en la **apertura** de la rueda siguiente, contra un bid/ask sintético
-  construido sobre el `open` (`--execute-at close` ejecuta al cierre). Al
-  ejecutar se recalcula el edge con esos precios y la operación se descarta si quedó bajo `--min-edge`
-  (`--no-edge-check` reproduce el comportamiento anterior, que ejecutaba igual).
-- **Diagnósticos.** Cada corrida imprime el embudo de señales por detector
-  (detectadas, encoladas, ejecutadas, rechazadas por edge desaparecido, sin
-  precio o sin capacidad) y el P&L por detector y por motivo de salida.
-
-**Advertencias.** El edge depende del spread supuesto: hay que reportar la
-sensibilidad a `--assumed-spread`. Los cierres de contratos distintos no son
-sincrónicos (último trade a horas distintas), lo que genera violaciones de no
-arbitraje aparentes en strikes poco operados. Polygon no publica open interest
-histórico.
-
----
-
-## Controles de sesgo implementados
-
-**Lookahead — alineación de barras.** Alpaca etiqueta las barras con el instante
-de *apertura* del intervalo. Una barra rotulada 14:30 cubre hasta 14:31, así que
-su `close` recién se conoce a las 14:31. `align_underlying` hace `merge_asof`
-contra `available_at = timestamp + bar_duration`, con `direction="backward"` y
-tolerancia máxima. Sin ese corrimiento se filtra hasta una barra completa de
-futuro, lo que en granularidad de 1 minuto alcanza para inventar arbitrajes.
-
-**Lookahead — precios ajustados.** El subyacente se pide con `adjustment="raw"`.
-Los precios ajustados por splits y dividendos se recalculan retroactivamente
-(información futura), y además los strikes de los contratos están expresados en
-términos no ajustados: alinear una opción contra un spot ajustado da un
-moneyness incorrecto.
-
-**Lookahead — open interest.** El OI de la rueda del día `t` se publica después
-del cierre. Filtrar operaciones del día `t` con ese número es lookahead. El
-merge exige `open_interest_date < trade_date`.
-
-**Survivorship.** El endpoint de contratos devuelve el universo vigente; los
-contratos vencidos desaparecen. Reconstruir hoy el universo de hace seis meses
-devuelve sólo lo que sobrevivió. La única mitigación real es el maestro
-append-only. Los backtests sobre períodos anteriores al inicio de la grabación
-arrastran el sesgo y deben reportarse como tales — decirlo explícitamente vale
-más que esconderlo.
-
-**Data snooping.** El manifiesto (`storage.write_manifest`) versiona todos los
-umbrales y supuestos junto al dataset. Cualquier cambio de hiperparámetro queda
-registrado, que es la condición mínima para que el split in-sample /
-out-of-sample signifique algo.
-
----
-
-## Volatilidad implícita
-
-Se invierte
-
-$$f(\sigma) = V_{\text{modelo}}(\sigma) - V_{\text{mercado}} = 0$$
-
-por Brent sobre $\sigma\in[\sigma_{\min}, 5]$. Brent y no Newton-Raphson: $f$ es
-monótona creciente en $\sigma$, pero el vega
-
-$$\mathcal{V} = S e^{-q\tau}\phi(d_1)\sqrt{\tau}$$
-
-se anula en las colas, y Newton diverge justamente en los contratos deep OTM que
-más interesan para detectar dislocaciones.
-
-Se calculan **dos** IVs por contrato:
-
-- `iv_american` — árbol CRR con ejercicio anticipado. Es la correcta: RTX, BA y
-  LMT tienen opciones americanas sobre acciones que pagan (o pagaron) dividendos.
-- `iv_european` — BSM cerrado, como control.
-
-La diferencia entre ambas cuantifica la prima de ejercicio anticipado. Reportar
-la IV europea sobre una put americana ITM y llamar "arbitraje" a la brecha
-resultante es el error clásico de este ejercicio.
-
-$\sigma_{\min}$ es adaptativo: el árbol CRR sólo mantiene $p\in(0,1)$ si
-$\sigma > |r-q|\sqrt{\Delta t}$. Abrir la búsqueda por debajo de esa cota hace
-fallar el solver sobre contratos válidos.
-
-**Cotas de no arbitraje.** Un mid fuera de
-$\max(Se^{-q\tau}-Ke^{-r\tau},\,S-K,\,0)\le C\le S$ es un error de datos o un
-arbitraje estático, nunca una IV. El solver devuelve `NaN` y marca
-`violates_bounds=True` en vez de forzar una raíz inexistente. Esas filas son
-material de presentación, no basura.
-
----
-
-## Filtros de liquidez
-
-Los filtros **no borran filas en silencio**: marcan cada causa en una columna
-`excl_*` y devuelven un `FilterReport` con el conteo por criterio. Esa tabla es
-la diferencia entre "aplicamos filtros de liquidez" y una justificación
-auditable.
-
-| Criterio | Umbral | Razón |
-|---|---|---|
-| `volume > 0` | 0 | Sin volumen no hay evidencia de operabilidad |
-| `open_interest > 50` | 50 | Sobre OI rezagado |
-| `bid > 0` | 0 | La exclusión más importante: con bid cero el mid colapsa a medio ask y genera falsos arbitrajes |
-| `(ask-bid)/mid < 0.15` | 0.15 | El spread es el costo de cruzar |
-| `spread_abs > 0` | — | Descarta quotes cruzados o bloqueados |
-| `mid ≥ 0.05` | 0.05 | Bajo eso el tick de 1 centavo domina la señal |
-| `7 ≤ dte ≤ 180` | — | Pin risk abajo, quotes poco confiables arriba |
-
----
-
-## Sobre la asincronía
-
-Los clientes REST de `alpaca-py` son **sincrónicos**; sólo el websocket
-(`OptionDataStream`) es nativo async. Envolverlos en `async def` sin más daría
-corrutinas que igual bloquean el event loop — asincronía cosmética. `clients.py`
-despacha cada llamada a un thread pool vía `asyncio.to_thread`, coordinada por
-un semáforo y un token bucket dimensionado en requests por minuto (190 por
-defecto, bajo el límite de 200 del plan gratuito), con reintentos por backoff
-exponencial y jitter.
-
----
-
-## Validación
-
-Los módulos de valuación se verifican contra invariantes conocidos: convergencia
-del CRR al europeo sin dividendos ($\Delta < 2.3\times10^{-3}$ con $N=1024$),
-paridad put-call europea al nivel de $10^{-8}$, prima de ejercicio anticipado no
-negativa, round-trip de IV con error $< 10^{-9}$, y una prueba de alineación con
-una barra "envenenada" que verifica que el `merge_asof` no la consuma.
-
-## Pendiente
-
-- Curva de tasas por tenor en vez de $r$ constante. El campo
-  `PricingAssumptions.risk_free_curve_path` existe pero **todavía ningún módulo
-  lo lee**: hoy siempre se usa `risk_free_rate`.
-- `record` arma el universo una sola vez al arrancar. Si queda corriendo varios
-  días no agrega el maestro diario que mitiga el survivorship bias; hay que
-  refrescarlo al cambiar la fecha.
-- `enrich` adjunta el open interest usando sólo el último `universe_*.parquet`.
-  Sobre fechas pasadas ese OI tiene fecha posterior al quote, se anula, y las
-  filas quedan excluidas por `open_interest_insuficiente`. Debería usar el
-  maestro correspondiente a cada `trade_date`.
-- Dividendos discretos en lugar de yield continuo — relevante para RTX cerca de
-  la ex-date, donde se concentra el ejercicio anticipado de calls.
-- Vencimiento anclado a 20:00 UTC; el huso correcto (16:00 ET) importa sólo en
-  contratos de 0-1 DTE, que igual quedan fuera por el filtro de `min_dte`.
-- Paralelización por proceso de la inversión de IV si el dataset crece.
-
-
----
-
-## Detección de arbitrajes
-
-Seis detectores en `arbitrage.py`. Los cinco primeros son **model-free**: se
-cumplen por no arbitraje puro y valen aunque el binomial esté mal calibrado.
-
-| Detector | Relación testeada |
-|---|---|
-| `monotonicity` | $K_1 < K_2 \Rightarrow C(K_1) \ge C(K_2)$ |
-| `vertical_bound` | $C(K_1) - C(K_2) \le K_2 - K_1$ |
-| `butterfly` | $C(K_2) \le w\,C(K_1) + (1-w)\,C(K_3)$ |
-| `put_call_parity` | $Se^{-q\tau} - K \le C_A - P_A \le S - Ke^{-r\tau}$ (banda americana) |
-| `calendar` | $T_2 > T_1 \Rightarrow C(T_2,K) \ge C(T_1,K)$ |
-| `model_dislocation` | Precio CRR contra el lado de mercado que se cruzaría |
-
-Todos usan bid y ask, nunca el mid ni el `lastPrice`: se compra al ask y se
-vende al bid, así el spread queda internalizado en el planteo. Cada oportunidad
-reporta el **edge neto en USD** después de comisiones, y la liquidez de su peor
-pata.
-
-Los detectores exigen la columna `is_tradable`. Si falta, levantan `KeyError` en
-vez de saltear el filtro: un filtro silencioso es peor que un filtro ausente.
-
-## Backtest
-
-`backtest.py` separa el instante de detección $t_d$ del de ejecución
-$t_e = t_d + \ell$, y **revalúa las patas con las cotizaciones de $t_e$**. Si el
-crédito se evaporó, la operación no se hace. La sensibilidad a $\ell$ es el
-resultado más informativo: sobre los datos de prueba, pasar de 5 a 20 minutos de
-latencia da vuelta el P&L de +756 a −143 USD.
-
-`PointInTimeView` es la única puerta a los datos durante el loop y levanta
-`LookaheadError` ante cualquier consulta hacia adelante. El control no es una
-convención sino una barrera.
-
-`evaluation.py` provee el split in-sample / out-of-sample sin solapamiento y el
-Sharpe deflactado por cantidad de configuraciones probadas. A igual Sharpe
-anualizado de 1.80, el DSR cae de 0.96 con una configuración a 0.007 con veinte.
-
-## Paper trading con Alpaca (piloto)
-
-```powershell
-python -m ita_options.pipeline doctor
-python -m ita_options.pipeline --tickers RTX paper-run --max-cycles 5          # dry-run: sólo registra el plan
-python -m ita_options.pipeline --tickers RTX paper-run --live --contracts 1    # envía a la cuenta paper
-New-Item KILL                                                                  # corte manual: detiene entradas y cierra todo
-```
-
-`paper-run` corre un ciclo cada 90 segundos con el mercado abierto:
-
-1. Snapshots del universo chico (±10% del spot, hasta 60 días).
-2. Detección de monotonicidad, spread vertical, butterflies consecutivas y paridad.
-3. Deduplicación por estructura.
-4. Controles previos: pérdida máxima, profundidad, fecha ex y short.
-5. Enrutamiento: `mleg` para las estructuras de opciones y la secuencia de patas separadas para la paridad.
-6. Gestión de riesgo: kill-switch por estructura, límite de pérdida diaria, cierre antes del vencimiento y archivo `KILL`.
-7. Reconciliación del ledger SQLite contra las posiciones de Alpaca en cada ciclo.
-
-Al terminar escribe `reportes/paper/session_<fecha>/` con estrategias, órdenes, eventos, ciclos y un resumen.
-
-**Secuencia de la paridad** (`execution/parity.py`). En paper, Alpaca rechazó con `40310000` una `mleg` que vendía el call mientras la compra de acciones seguía `partially_filled`. La secuencia es:
-
-1. Acciones con límite marcable.
-2. **Fill completo o cancelación**; sólo cuentan lotes de 100 y el remanente se deshace.
-3. Posición confirmada en el broker.
-4. Edge residual recalculado con el precio real de las acciones.
-5. Recién ahí la `mleg` de opciones.
-6. Si la `mleg` es rechazada o no llena, se deshacen las acciones.
-
-El cierre invierte el orden: opciones primero, acciones después.
-
-**Controles agregados después del dry-run del 14/09/2026:**
-
-- **Spot alineado.** El spot de cada contrato es la barra IEX de 1 minuto vigente en el timestamp de su quote, no el último quote de la acción. Con quotes de opciones demorados, el spot en tiempo real fabricaba reversas de paridad que duraban un ciclo.
-- **Signo por `side`.** Las posiciones cortas toman el signo del campo `side` de Alpaca.
-- **Excepciones.** Una excepción durante la ejecución no mata el loop: se registra, se detienen las entradas y se siguen gestionando las posiciones.
-- **Diagnóstico.** `cycles.csv` guarda las exclusiones por criterio de cada ciclo.
-
-Para cortar usar el archivo `KILL`, no Ctrl+C: interrumpir el proceso en medio de una secuencia puede dejar patas sin gestionar.
-
-**Límites del piloto.** Con el feed `indicative` valida la cañería (órdenes, estado, reconciliación, kill-switch), no el edge. El paper de Alpaca no simula slippage, dividendos ni costo de préstamo. Los ejercicios y asignaciones se sincronizan al día siguiente, por eso las estructuras que vencen se cierran antes del cierre de la rueda.
-
-Componentes:
-
-- **`doctor`**: además de conectividad y datos, verifica nivel de opciones (los spreads `mleg` requieren nivel 3), buying power de opciones, short habilitado y reloj de mercado.
-- **`ita_options/execution/orders.py`**: traduce el `leg_spec` de una señal a un `LimitOrderRequest` `mleg`.
-  - Pesos a `ratio_qty` enteros con MCD 1.
-  - Rechaza patas de acción, que Alpaca no admite en `mleg`.
-  - `client_order_id` determinístico.
-- **`ita_options/execution/risk.py`**: controles previos al envío.
-  - Pérdida máxima al vencimiento contra buying power y tope.
-  - Profundidad del NBBO.
-  - Fecha ex-dividendo en paridades.
-  - Short disponible.
-- **`arbitrage.execution_edge`**: la misma fórmula de edge residual que usa el backtest.
-- **`scripts/paper_probe.py`**: pruebas de la fase 0 en la cuenta paper. Averigua:
-  - el signo del `limit_price` de las `mleg`;
-  - si Alpaca acepta una conversión con la acción comprada antes;
-  - si acepta una reversa con la acción en corto.
-
-  Sin `--submit` sólo muestra el plan. Con `--submit` exige mercado abierto y limpia órdenes y posiciones al terminar.
-
-```powershell
-python -m ita_options.pipeline doctor
-python scripts/paper_probe.py --underlying RTX            # plan
-python scripts/paper_probe.py --underlying RTX --submit   # en paper, con mercado abierto
-```
-
-- **`execution/broker.py`, `ledger.py`, `router.py`, `parity.py`, `live_data.py` y `live_runner.py`**: interfaz del broker, ledger y reconciliación, ejecución `mleg`, secuencia de paridad, cadena en vivo y loop.
-- **`tests/fake_broker.py`**: broker falso que reproduce los fills parciales y el rechazo de opciones descubiertas observados en paper.
-
-**No probado todavía:** el loop contra la API real. Correr primero `paper-run` en dry-run durante una rueda completa.
-
-## Tests
 
 ```bash
-pytest
+ita-options doctor                                    # conectividad, nivel de opciones y datos
+ita-options paper-run --strategy rv_compite           # prueba en seco: no envía órdenes
 ```
 
-98 tests, sin red ni credenciales. La estrategia es generar los precios con el
-mismo modelo que después detecta: si un detector encuentra algo sobre una cadena
-generada por el modelo, el falso positivo es del detector.
+La configuración de producción está en
+[`deploy/oracle/paper_daily.sh`](deploy/oracle/paper_daily.sh) (Linux) y
+[`scripts/paper_daily.ps1`](scripts/paper_daily.ps1) (Windows): los dos modelos
+compiten (`rv_compite`), cobertura delta-gamma, kill-switch de USD 250 al mid,
+pérdida diaria de USD 1.000 y órdenes maker publicadas hasta 30 minutos.
 
-`test_calibration.py` blinda la muestra sintética: falla si la vol simulada se
-aleja del objetivo, si el skew deja de ser negativo, si las colas dejan de ser
-gordas o si se rompe el ordenamiento entre activos.
+Corre sola en una VM gratuita de Oracle Cloud, de lunes a viernes a las 9:20
+de Nueva York. Instalación, operación y cómo traer los resultados:
+[`deploy/oracle/README.md`](deploy/oracle/README.md). Para cortar todo, crear
+un archivo `KILL` en esta carpeta.
 
-## Mercado sintético
+## Otros archivos
 
-Alpaca no tiene bid/ask histórico de opciones, así que la demo y parte de la
-validación corren sobre un mercado generado. `calibration.py` define un perfil
-por activo (spot, dividendo, vol total, saltos, skew y curvatura del smile) y
-simula una difusión con saltos de Merton bajo la medida riesgo-neutral, con la
-vol total igual a la IV at-the-money: la vol realizada coincide con la implícita
-por construcción. La cadena se valúa con el árbol CRR sobre el smile de cada
-activo, así que no contiene arbitrajes salvo los inyectados a propósito.
-
-La metodología completa y los parámetros están en
-`justificacion_generacion_datos.md`; `python validate_sample.py` reproduce la
-tabla de momentos y la figura `outputs/validacion_distribucion.png`.
-
-`test_sdk_contract.py` construye los objetos que devuelve Alpaca y verifica que
-los adaptadores lean los campos correctos. Es la clase de test que detecta un
-nombre de campo inventado, cosa que ningún test con datos propios logra.
+| Archivo | Qué es |
+|---|---|
+| `informe_proyecto.md` / `.pdf` | Informe consolidado del semestre. El PDF se arma con pandoc y XeLaTeX (`pandoc informe_proyecto.md -o informe_proyecto.pdf --pdf-engine=xelatex`); `generate_report_pdf.py` e `informe_proyecto.css` son una alternativa sin LaTeX, a partir de la versión HTML |
+| `ESTADO.md` | Estado por etapa de la consigna y pendientes |
+| `resumen_presentacion/` | Resumen de 33 páginas para armar la presentación (LaTeX) |
+| `reportes_dolthub/`, `reportes_replay/` | Resultados vigentes (CSV y gráficos) |
+| `docs/notas_tecnicas_parte1.md` | Notas técnicas de septiembre: controles de sesgo, IV, filtros, detectores y piloto |
+| `validate_sample.py`, `justificacion_generacion_datos.md`, `outputs/` | **Históricos (Parte 1):** validación de la muestra sintética de la demo |
+| `reportes/paper_probe_*.json` | **Histórico (Parte 1):** prueba de órdenes del 14/09 |

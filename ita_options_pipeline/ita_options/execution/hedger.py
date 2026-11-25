@@ -1,4 +1,4 @@
-r"""Cobertura delta en vivo con acciones, un libro por modelo (Parte 2, paso 4).
+"""Cobertura en vivo con griegas (delta con acciones y gamma con la call ATM), un libro por modelo (Parte 2, paso 4).
 
 Cada estrategia abierta pertenece a un modelo (``rv_crr_*`` al binomial,
 ``rv_bsm_*`` a Black-Scholes). En cada ciclo:
@@ -44,7 +44,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Literal, Mapping
 
 import pandas as pd
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -103,6 +103,7 @@ class _SmileCache:
         self._cache: dict[tuple, Any] = {}
 
     def greeks(self, model: str, row: Mapping[str, Any]) -> Any | None:
+        """Griegas de una opción con el modelo pedido y la sonrisa calibrada de su vencimiento."""
         key = (model, row["underlying"], row["expiration"])
         if key not in self._cache:
             part = self.fit_base.loc[(self.fit_base["underlying"] == row["underlying"])

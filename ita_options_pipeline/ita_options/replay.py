@@ -29,7 +29,7 @@ al mid. El efectivo rinde la tasa del día y la acción cobra sus dividendos.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal, Mapping, Sequence
 
@@ -62,6 +62,7 @@ class ReplayRules:
 
 @dataclass
 class Structure:
+    """Una orden de la simulación y, si se llenó, la posición resultante."""
     sid: int
     model: str
     detector: str
@@ -81,6 +82,7 @@ class Structure:
 
     @property
     def key(self) -> frozenset:
+        """Patas con su cantidad: identifica estructuras iguales para no abrirlas dos veces."""
         return frozenset((leg["symbol"], leg["qty"]) for leg in self.legs)
 
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any, Iterator, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import numpy as np

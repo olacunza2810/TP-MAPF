@@ -1,5 +1,8 @@
 """Validación de la muestra sintética contra la distribución de cada activo real.
 
+Histórico (Parte 1): la muestra sintética alimenta sólo la demo offline; los
+resultados vigentes usan bid/ask observado de DoltHub.
+
 Genera la evidencia que responde la objeción del profesor:
 
 1. **Coherencia interna** — la vol realizada del camino iguala a la IV con la que

@@ -1,6 +1,6 @@
 # Estado del proyecto — Grupo 3 (Defensa / ITA)
 
-Última actualización: 23 de noviembre de 2026. Rama `main`.
+Última actualización: 25 de noviembre de 2026. Rama `main`.
 Subyacentes: **RTX**, **BA** y **LMT**.
 
 ## Cómo correrlo
@@ -9,7 +9,7 @@ Requiere Python 3.11 o superior. Desde esta carpeta:
 
 ```powershell
 pip install -e ".[dev]"
-python -m pytest                          # sin red ni credenciales
+python -m pytest                          # 191 tests, sin red ni credenciales
 python scripts/check_informe.py           # números del informe contra reportes_dolthub/
 ```
 
@@ -25,6 +25,7 @@ python scripts/run_model_comparison.py --spot underlying_price   # robustez con 
 python scripts/run_hedging.py                                # Parte 2, paso 4 (~3 min)
 python scripts/run_stress.py                                 # Parte 2, paso 5 (~11 min)
 python scripts/scorecard.py                                  # Parte 2, paso 6
+python scripts/run_replay.py --data-root data_hist --out reportes_replay   # historia 2020-2026 (ver README)
 ```
 
 ## Estado por etapa de la consigna
@@ -38,7 +39,7 @@ python scripts/scorecard.py                                  # Parte 2, paso 6
 | Detección | Cinco detectores model-free; paridad con dividendo discreto, fondeo y banda de spot |
 | Backtest | Contra bid/ask observado, con carry y asignación anticipada: 0 operaciones de arbitraje |
 | IS/OOS | Walk-forward de la estrategia de valor relativo (CRR y BSM), julio a noviembre |
-| Paper trading | `paper-run --strategy rv_crr`; diagnóstico OK el 22/11; primera rueda: 23/11 |
+| Paper trading | `paper-run --strategy rv_compite` en una VM de Oracle Cloud, de lunes a viernes desde el 23/11 |
 | Monitoreo y stop-loss | Loop de rueda completa con reconciliación, kill-switch, pérdida diaria y corte manual |
 | AI log | `../AI_LOG.md` (cada integrante agrega sus interacciones) |
 
@@ -51,7 +52,9 @@ python scripts/scorecard.py                                  # Parte 2, paso 6
 | 3. BS contra binomial en DoltHub | `run_model_comparison.py`: prima de ejercicio, repricing, Diebold-Mariano |
 | 4. Cobertura con griegas | `run_hedging.py` (DoltHub) y `--hedge delta_gamma` en paper: un libro por modelo y subyacente |
 | 5. Monte Carlo de estrés | `run_stress.py`: cartera en producción, 6 escenarios MC (5.000 trayectorias) y 5 determinísticos |
-| 6. Scorecard, informe y presentación | `scorecard.py` (criterios fijados antes del paper), informe consolidado (22 págs., 90 números verificados), AI log, slides de la Parte 2 |
+| 6. Scorecard, informe y presentación | `scorecard.py` (criterios fijados antes del paper), informe consolidado (22 págs., 90 números verificados), AI log, resumen para la presentación (`resumen_presentacion/`, 33 págs.) |
+| Simulación histórica 2020–2026 | `run_replay.py`: el sistema completo foto por foto sobre 1.229 ruedas de DoltHub |
+| Producción | VM gratuita de Oracle Cloud con `cron` (`deploy/oracle/`); órdenes maker publicadas hasta 30 min (`--rest-seconds 1800`) |
 
 Paso 3, en una línea por resultado (spot implícito, 181 ruedas, 36.515 contratos):
 
@@ -106,21 +109,44 @@ Paso 5 (cartera a capacidad del 20/11: 3 estructuras por modelo, 10 ruedas):
   que vale v0), así que la vol estocástica nunca llega al precio. Corregido acá
   (y con truncamiento completo); un test lo verifica.
 
+Simulación histórica (1.229 ruedas, enero 2020 a noviembre 2026, cobertura delta):
+
+- 2.992 órdenes publicadas, 185 llenadas (6%) y cerradas. P&L medio por
+  estructura: binomial USD −101 (EE 14), Black-Scholes USD −97 (EE 17).
+  Pierden todos los años y con los dos modelos.
+- El modelo promete USD +11 por estructura; saliendo al mid se pierden USD 46 a 68
+  (selección adversa) y el spread de salida suma USD 35 a 50 más.
+- M4 sobre la simulación: diferencia −4,6 con EE 22,5 ($z=-0{,}21$): empate.
+- La delta-gamma entera da lo mismo que la delta: con 1 unidad, la gamma pide
+  menos de medio contrato y redondea a 0.
+
+Paper en producción (Oracle, desde el 23/11):
+
+- 23 y 24/11: 155 órdenes y 0 llenadas. La espera bloqueante de 3 minutos casi
+  nunca alcanza para que el mercado cruce una orden maker, y frenaba el ciclo.
+- Desde el 26/11: las órdenes quedan publicadas hasta 30 minutos sin bloquear el
+  ciclo (`--rest-seconds 1800`), más parecido a la simulación histórica.
+
 ## Pendiente
 
-- Correr `paper-run` en cada rueda y sumar el P&L acumulado al informe.
-- Correr el paper (`scripts/paper_daily.ps1`) y completar con el P&L acumulado: la slide de paper, la sección 12 del informe y el criterio M4 (`scorecard.py --ledger data/paper/ledger.sqlite`).
+- Con 10 o más estructuras cerradas por modelo en paper: completar el criterio
+  M4 en vivo (`scorecard.py --ledger reportes/paper_vm/ledger.sqlite`, después
+  de traer el ledger de la VM con `deploy/oracle/traer_resultados.ps1`), la sección de
+  resultados finales del informe y la sección 10 del resumen.
+- Sumar al informe consolidado la simulación histórica y la puesta en producción.
+- Completar el AI log con la sesión del 23 al 25/11.
 
 ## Paper trading: corrida diaria
 
-Las claves van en `.env` (no se versiona). Arrancar antes de la apertura
-(11:30 hora argentina hasta el cambio de horario de EE.UU.); el loop espera la
-apertura y termina después del cierre:
+En producción la lanza `cron` en la VM (ver `deploy/oracle/README.md`). Para
+correrla a mano en Windows, con las claves en `.env`, arrancar antes de la
+apertura; el loop espera la apertura y termina después del cierre:
 
 ```powershell
 python -m ita_options.pipeline paper-run --live --strategy rv_compite --cap-per-model 3 --contracts 1 --max-open 6 `
     --min-edge 10 --take-profit 0.6 --fill-timeout 180 --kill-switch 250 --daily-loss 1000 `
-    --min-dte 21 --max-dte 75 --cycle-seconds 120 --hedge delta_gamma --hedge-band 10 --hedge-max-contracts 5
+    --min-dte 21 --max-dte 75 --cycle-seconds 120 --hedge delta_gamma --hedge-band 10 --hedge-max-contracts 5 `
+    --rest-seconds 1800
 ```
 
 Corte manual: crear un archivo `KILL` en esta carpeta.

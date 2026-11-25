@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from typing import Iterable, Literal, Sequence
+from typing import Iterable, Literal
 
 import numpy as np
 import pandas as pd

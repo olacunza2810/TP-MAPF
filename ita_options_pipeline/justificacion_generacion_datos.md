@@ -1,5 +1,9 @@
 # Generación de la muestra sintética: metodología y justificación
 
+> **Histórico (Parte 1).** La muestra sintética alimenta sólo la demo offline
+> (`ita-options demo`). Los resultados vigentes usan bid/ask observado de
+> DoltHub; ver `informe_proyecto.md`.
+
 > Sección para incorporar al informe (reemplaza / amplía lo que hoy dice
 > "generación sintética"). Responde la observación del profesor: la distribución
 > de precios de la muestra debe parecerse lo más posible a la de los tres activos

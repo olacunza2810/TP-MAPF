@@ -56,14 +56,13 @@ sobre los mismos días-posición. :math:`E=1` es una cobertura perfecta.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import Iterable, Literal, Mapping, Sequence
+from typing import Iterable, Literal, Sequence
 
 import numpy as np
 import pandas as pd
 
-from .greeks import Greeks, model_greeks
+from .greeks import Greeks
 
 __all__ = [
     "STRATEGIES",

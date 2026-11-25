@@ -21,3 +21,13 @@ KILL
 .env
 reportes_dolthub/calibracion_errores_por_contrato.csv
 reportes/paper/logs/
+resumen_presentacion/resumen.pdf
+resumen_presentacion/*.aux
+resumen_presentacion/*.log
+resumen_presentacion/*.fls
+resumen_presentacion/*.fdb_latexmk
+resumen_presentacion/*.out
+resumen_presentacion/*.toc
+resumen_presentacion/*.xdv
+reportes_replay/senales.pkl
+reportes_replay/run.log

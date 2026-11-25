@@ -229,6 +229,7 @@ class Ledger:
         return record
 
     def strategy(self, strategy_id: str) -> dict[str, Any]:
+        """Una estrategia por id, o ``None`` si no existe."""
         row = self._conn.execute("SELECT * FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
         if row is None:
             raise KeyError(strategy_id)
@@ -237,6 +238,7 @@ class Ledger:
     def strategies(
         self, states: Iterable[str] | None = None, session_date: date | None = None
     ) -> list[dict[str, Any]]:
+        """Estrategias, opcionalmente filtradas por estado."""
         query, params = "SELECT * FROM strategies WHERE 1=1", []
         if states is not None:
             states = list(states)
@@ -249,6 +251,7 @@ class Ledger:
         return [self._row_to_strategy(row) for row in rows]
 
     def open_strategies(self) -> list[dict[str, Any]]:
+        """Estrategias con posición: ``open`` y ``closing``."""
         return self.strategies(OPEN_STATES)
 
     def active_strategies(self) -> list[dict[str, Any]]:
@@ -322,6 +325,7 @@ class Ledger:
         self._conn.commit()
 
     def orders(self, strategy_id: str | None = None) -> list[dict[str, Any]]:
+        """Órdenes registradas, de una estrategia o todas, en orden de envío."""
         if strategy_id is None:
             rows = self._conn.execute("SELECT * FROM orders ORDER BY submitted_at").fetchall()
         else:
@@ -331,6 +335,7 @@ class Ledger:
         return [dict(row) for row in rows]
 
     def event(self, kind: str, payload: Any = None, strategy_id: str | None = None) -> None:
+        """Registra un evento (corte, error, fill maker...) con su detalle en JSON."""
         self._conn.execute(
             "INSERT INTO events (at, strategy_id, kind, payload_json) VALUES (?,?,?,?)",
             (_utcnow(), strategy_id, kind, _json(payload)),
@@ -338,6 +343,7 @@ class Ledger:
         self._conn.commit()
 
     def events(self, kind: str | None = None) -> list[dict[str, Any]]:
+        """Eventos registrados, opcionalmente de un tipo."""
         if kind is None:
             rows = self._conn.execute("SELECT * FROM events ORDER BY id").fetchall()
         else:
@@ -370,6 +376,7 @@ class Ledger:
         return [dict(row) for row in rows]
 
     def hedge_book(self, model: str, underlying: str) -> dict[str, Any]:
+        """Acciones de cobertura de un libro (modelo y subyacente)."""
         book = f"{model}:{underlying}"
         row = self._conn.execute("SELECT * FROM hedges WHERE book = ?", (book,)).fetchone()
         if row is None:
@@ -410,6 +417,7 @@ class Ledger:
         self._conn.commit()
 
     def close(self) -> None:
+        """Cierra la conexión a la base."""
         self._conn.close()
 
 
@@ -423,6 +431,7 @@ class ReconciliationReport:
 
     @property
     def ok(self) -> bool:
+        """``True`` si el ledger y el broker coinciden en todas las posiciones."""
         return not self.diffs
 
 

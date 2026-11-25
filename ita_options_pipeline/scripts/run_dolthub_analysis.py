@@ -34,7 +34,7 @@ import json
 import logging
 import sys
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
@@ -44,12 +44,12 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ita_options.arbitrage import ExecutionCosts, run_all_detectors  # noqa: E402
+from ita_options.arbitrage import ExecutionCosts  # noqa: E402
 from ita_options.backtest import ArbitrageBacktester  # noqa: E402
 from ita_options.daily import daily_strategy_params  # noqa: E402
 from ita_options.dolthub import DoltHubData, curate  # noqa: E402
-from ita_options.evaluation import compute_metrics, deflated_sharpe_ratio, signal_funnel, trade_breakdown  # noqa: E402
-from ita_options.rv_backtest import RVParams, default_grid, precompute_valuations, simulate, summarize  # noqa: E402
+from ita_options.evaluation import deflated_sharpe_ratio, signal_funnel, trade_breakdown  # noqa: E402
+from ita_options.rv_backtest import default_grid, precompute_valuations, simulate, summarize  # noqa: E402
 
 _LOG = logging.getLogger("dolthub_analysis")
 TICKERS = ("RTX", "BA", "LMT")
