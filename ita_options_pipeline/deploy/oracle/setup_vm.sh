@@ -50,8 +50,10 @@ echo "== Tests"
 .venv/bin/python -m pytest -q
 
 echo "== Cron: lunes a viernes 9:20 (Nueva York)"
-chmod +x deploy/oracle/paper_daily.sh
-line="20 9 * * 1-5 $APP/deploy/oracle/paper_daily.sh"
+# Se lanza con bash y no por el permiso de ejecución: con core.fileMode=false,
+# cada git pull que modifica el script lo deja sin ese permiso y cron no puede
+# ejecutarlo (pasó el 26 y el 27 de noviembre).
+line="20 9 * * 1-5 /bin/bash $APP/deploy/oracle/paper_daily.sh"
 # Sin crontab previo, `crontab -l` y `grep` salen con error: con pipefail eso
 # cortaba el script en silencio, así que se toleran.
 { crontab -l 2>/dev/null | grep -v "paper_daily.sh" || true; echo "$line"; } | crontab -
