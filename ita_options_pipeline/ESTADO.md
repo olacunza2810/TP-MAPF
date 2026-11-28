@@ -9,7 +9,7 @@ Requiere Python 3.11 o superior. Desde esta carpeta:
 
 ```powershell
 pip install -e ".[dev]"
-python -m pytest                          # 191 tests, sin red ni credenciales
+python -m pytest                          # 193 tests, sin red ni credenciales
 ```
 
 Con red (DoltHub y Yahoo):
@@ -121,10 +121,14 @@ Simulación histórica (1.229 ruedas, enero 2020 a noviembre 2026, cobertura del
 
 Paper en producción (Oracle, desde el 23/11):
 
-- 23 y 24/11: 155 órdenes y 0 llenadas. La espera bloqueante de 3 minutos casi
-  nunca alcanza para que el mercado cruce una orden maker, y frenaba el ciclo.
-- Desde el 26/11: las órdenes quedan publicadas hasta 30 minutos sin bloquear el
+- 23 a 25/11: 217 ciclos, 227 órdenes y 0 llenadas (74, 81 y 72 por rueda).
+  La espera bloqueante de 3 minutos casi nunca alcanza para que el mercado cruce
+  una orden maker, y frenaba el ciclo.
+- Corrección: las órdenes quedan publicadas hasta 30 minutos sin bloquear el
   ciclo (`--rest-seconds 1800`), más parecido a la simulación histórica.
+- 26/11: feriado en EE.UU. (Thanksgiving). 27/11: no corrió porque un `git pull`
+  dejó `paper_daily.sh` sin permiso de ejecución; cron ahora lo lanza con
+  `/bin/bash`. La primera rueda con órdenes de 30 minutos es la del 30/11.
 
 ## Pendiente
 

@@ -57,7 +57,7 @@ Requiere Python 3.11 o superior. Desde `ita_options_pipeline/`:
 
 ```bash
 pip install -e ".[dev,analisis]"
-python -m pytest                    # 191 tests, sin red ni credenciales
+python -m pytest                    # 193 tests, sin red ni credenciales
 ita-options demo                    # demo offline sobre un mercado sintético
 ```
 

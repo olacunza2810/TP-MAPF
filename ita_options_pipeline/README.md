@@ -13,7 +13,7 @@ Requiere Python 3.11 o superior.
 ```bash
 pip install -e ".[dev]"             # paquete + pytest
 pip install -e ".[dev,analisis]"    # + matplotlib, para regenerar los gráficos
-python -m pytest                    # 191 tests, sin red ni credenciales (~30 s)
+python -m pytest                    # 193 tests, sin red ni credenciales (~30 s)
 ita-options demo                    # pipeline completo sobre un mercado sintético, offline
 ```
 
